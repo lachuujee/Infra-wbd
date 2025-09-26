@@ -8,6 +8,7 @@ terraform {
     }
   }
 
+  # Keep backend at the module for your current pattern (same as IAM)
   backend "s3" {
     bucket  = "wbd-tf-state-sandbox"
     key     = "wbd/sandbox/s3/terraform.tfstate"
@@ -17,5 +18,6 @@ terraform {
 }
 
 provider "aws" {
-  region = "us-east-1"
+  # Align with IAM: take region from module input
+  region = var.region
 }
