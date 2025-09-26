@@ -3,18 +3,18 @@ terraform {
 }
 
 locals {
-  cfg = read_tfvars_file(find_in_parent_folders("inputs.json"))
+  inputs_path = "${get_terragrunt_dir()}/../inputs.json"
+  cfg         = read_tfvars_file(local.inputs_path)
 }
 
 inputs = {
-  # provider region for the module
   region    = "us-east-1"
 
-  # take the role name exactly from JSON (which already follows your sandbox naming)
-  name      = local.cfg.modules.iam.name
+  # Use the name from your JSON as both module name and actual IAM role name
+  name      = local.cfg.modules.iam.name          # "sbx_intake_id_001-iam"
   role_name = local.cfg.modules.iam.name
 
-  # trust & permissions (use JSON if provided, else sane defaults)
+  # Trust & permissions (defaults if not present)
   assume_services      = try(local.cfg.modules.iam.assume_services, ["ec2.amazonaws.com"])
   managed_policy_arns  = try(local.cfg.modules.iam.managed_policy_arns, ["arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"])
   path                 = try(local.cfg.modules.iam.path, "/")
