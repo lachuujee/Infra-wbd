@@ -17,10 +17,7 @@ terraform {
   }
 }
 
-# Region logic:
-# Region comes from var.region, default to us-east-1 if empty/null
+# Region comes from var.region; default to us-east-1 if empty/null
 provider "aws" {
-  region = (var.region != null && trimspace(var.region) != "")
-    ? var.region
-    : "us-east-1"
+  region = (var.region != null && trimspace(var.region) != "") ? var.region : "us-east-1"
 }
