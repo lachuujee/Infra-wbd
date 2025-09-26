@@ -1,4 +1,3 @@
-# live/sandbox/users/intake_001/iam/terragrunt.hcl
 terraform {
   source = "../../../../../modules/iam"
 }
@@ -7,17 +6,26 @@ locals {
   cfg       = read_tfvars_file(find_in_parent_folders("inputs.json"))
   raw_name  = try(local.cfg.sandbox_name, "sandbox")
   # sanitize without regex: lower + replace spaces/underscores with hyphen
-  name_base = lower(replace(replace(trimspace(raw_name), " ", "-"), "_", "-"))
-  role_base = "${name_base}-iam"
+  name_base = lower(replace(replace(trimspace(local.raw_name), " ", "-"), "_", "-"))
+  role_base = "${local.name_base}-iam"
 }
 
 inputs = {
+  # provider region for the module
   region               = try(local.cfg.aws_region, "us-east-1")
+
+  # role identity
   name                 = local.role_base
   role_name            = local.role_base
+
+  # trust + permissions (taken from inputs.json if present)
   assume_services      = try(local.cfg.modules.iam.assume_services, ["ec2.amazonaws.com"])
   managed_policy_arns  = try(local.cfg.modules.iam.managed_policy_arns, ["arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"])
+
+  # optional IAM path
   path                 = try(local.cfg.modules.iam.path, "/")
+
+  # tags
   tags_extra = merge(
     try(local.cfg.common_tags, {}),
     {
