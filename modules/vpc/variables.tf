@@ -1,59 +1,69 @@
+# -------- Core ----------
 variable "region" {
   type        = string
-  description = "AWS region for this module's provider"
+  description = "AWS region for this module"
   default     = "us-east-1"
 }
 
 variable "enabled" {
-  type    = bool
-  default = true
+  type        = bool
+  description = "Toggle to create/destroy this stack"
+  default     = true
 }
 
 variable "sandbox_name" {
-  type = string
+  type        = string
+  description = "Name used for tagging/prefixing resources (e.g., SBX_INTAKE_ID_001)"
 }
 
 variable "name_prefix_override" {
-  type    = string
-  default = null
+  type        = string
+  description = "Optional override for name prefix; defaults to sandbox_name"
+  default     = null
 }
 
-# Prefer CIDR by default; set to null to switch to IPAM
+# -------- Addressing (CIDR default; IPAM only if cidr_block is null) ----------
 variable "cidr_block" {
-  type    = string
-  default = "10.0.0.0/16"
+  type        = string
+  description = "VPC CIDR. Leave null to use IPAM."
+  default     = "10.0.0.0/16"
 }
 
-# IPAM settings (used only if cidr_block is null/empty)
 variable "ipam_pool_id" {
-  type    = string
-  default = null
+  type        = string
+  description = "IPAM pool ID (required if cidr_block = null)"
+  default     = null
 }
 
 variable "vpc_netmask_length" {
-  type    = number
-  default = 16
+  type        = number
+  description = "Netmask length used with IPAM (only when cidr_block = null)"
+  default     = 16
 }
 
-# Optional AZs; if null/len<2 we auto-pick 2 from the region
+# -------- AZ selection ----------
 variable "azs" {
-  type    = list(string)
-  default = null
+  type        = list(string)
+  description = "Optional list of AZs (>=2). If not set or <2, module picks first two in region."
+  default     = null
 }
 
+# -------- Misc ----------
 variable "flow_logs_retention_days" {
-  type    = number
-  default = 30
+  type        = number
+  description = "CloudWatch retention for VPC flow logs"
+  default     = 30
 }
 
 variable "tags_extra" {
-  type    = map(string)
-  default = {}
+  type        = map(string)
+  description = "Extra tags merged into all resources"
+  default     = {}
 }
 
+# -------- Locals derived from inputs ----------
 locals {
   name_prefix = coalesce(var.name_prefix_override, trimspace(var.sandbox_name))
-
   common_tags = merge(
     {
       Name    = "${local.name_prefix}-vpc"
