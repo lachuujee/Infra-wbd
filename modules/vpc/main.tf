@@ -1,34 +1,28 @@
 ############################################
-# Helper: AZs (auto-pick for current region)
+# AZs (hard-coded default to avoid parse/null issues)
 ############################################
-data "aws_availability_zones" "available" {
-  state = "available"
-}
-
 locals {
-  # null-safe: if var.azs is null use [], length([]) = 0
-  azs_effective = length(coalesce(var.azs, [])) >= 2
-    ? coalesce(var.azs, [])
-    : slice(data.aws_availability_zones.available.names, 0, 2)
-  az0 = local.azs_effective[0]
-  az1 = local.azs_effective[1]
+  # If you pass var.azs, we’ll use it. Otherwise default to us-east-1a/b.
+  azs_effective = coalesce(var.azs, ["us-east-1a", "us-east-1b"])
+  az0           = local.azs_effective[0]
+  az1           = local.azs_effective[1]
 }
 
 ############################################
 # Addressing: default to CIDR unless IPAM is explicitly provided
 ############################################
 locals {
-  # If cidr_block is null, fall back to 10.0.0.0/16 (safe default)
+  # Default to a safe CIDR if not supplied
   cidr_effective = coalesce(var.cidr_block, "10.0.0.0/16")
 
-  # Only use IPAM when you explicitly pass ipam_pool_id and you intentionally set cidr_block = null
+  # Only use IPAM when cidr_block is null AND ipam_pool_id is given
   use_ipam = (var.cidr_block == null && var.ipam_pool_id != null)
 }
 
 resource "aws_vpc" "this" {
   count = var.enabled ? 1 : 0
 
-  # CIDR (default) vs IPAM (only when both conditions are met)
+  # CIDR (default) vs IPAM (only when explicitly requested)
   ipv4_ipam_pool_id   = local.use_ipam ? var.ipam_pool_id       : null
   ipv4_netmask_length = local.use_ipam ? var.vpc_netmask_length : null
   cidr_block          = local.use_ipam ? null                   : local.cidr_effective
@@ -57,7 +51,7 @@ locals {
 # - 2 public  /28 subnets (≈16 IPs)
 ############################################
 locals {
-  private_cidrs  = var.enabled ? [
+  private_cidrs = var.enabled ? [
     cidrsubnet(local.vpc_cidr, 3, 0),
     cidrsubnet(local.vpc_cidr, 3, 1),
     cidrsubnet(local.vpc_cidr, 3, 2),
@@ -66,13 +60,13 @@ locals {
     cidrsubnet(local.vpc_cidr, 3, 5)
   ] : []
 
-  public_parent  = var.enabled ? cidrsubnet(local.vpc_cidr, 4, 15) : null
-  public_cidrs   = var.enabled ? [
+  public_parent = var.enabled ? cidrsubnet(local.vpc_cidr, 4, 15) : null
+  public_cidrs  = var.enabled ? [
     cidrsubnet(local.public_parent, 4, 0),
     cidrsubnet(local.public_parent, 4, 1)
   ] : []
 
-  private_def    = var.enabled ? {
+  private_def = var.enabled ? {
     "app-a" = { cidr = local.private_cidrs[0], az = local.az0, role = "app" }
     "app-b" = { cidr = local.private_cidrs[1], az = local.az1, role = "app" }
     "api-a" = { cidr = local.private_cidrs[2], az = local.az0, role = "api" }
