@@ -1,30 +1,36 @@
-# live/sandbox/users/intake_001/iam/terragrunt.hcl
 terraform {
-  source = "../../../../../modules/iam"
+  source = "../../../../../modules/s3"
 }
 
 locals {
-  cfg       = read_tfvars_file(find_in_parent_folders("inputs.json"))
-  raw_name  = try(local.cfg.sandbox_name, "sandbox")
-  # sanitize without regex: lower + replace spaces/underscores with hyphen
-  name_base = lower(replace(replace(trimspace(local.raw_name), " ", "-"), "_", "-"))
-  role_base = "${local.name_base}-iam"
+  # inputs.json sits one level up from this folder
+  inputs_path = "${get_terragrunt_dir()}/../inputs.json"
+  cfg         = jsondecode(file(local.inputs_path))
 }
 
 inputs = {
-  region               = try(local.cfg.aws_region, "us-east-1")
-  name                 = local.role_base
-  role_name            = local.role_base
-  assume_services      = try(local.cfg.modules.iam.assume_services, ["ec2.amazonaws.com"])
-  managed_policy_arns  = try(local.cfg.modules.iam.managed_policy_arns, ["arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"])
-  path                 = try(local.cfg.modules.iam.path, "/")
-  tags_extra = merge(
-    try(local.cfg.common_tags, {}),
-    {
-      RequestID   = try(local.cfg.request_id,   "unknown")
-      Requester   = try(local.cfg.requester,    "unknown")
-      Environment = try(local.cfg.environment,  "sandbox")
-      Service     = "IAM"
-    }
-  )
+  # Gate from JSON
+  enabled    = local.cfg.modules.s3.enabled
+
+  # Required by your module (used for tags and uniqueness when needed)
+  request_id = local.cfg.request_id
+
+  # Keep the provided name exactly; force the bucket to that name
+  # JSON: modules.s3.name = "sbx-intake-id-001-s3" (already DNS-safe)
+  name                 = local.cfg.modules.s3.name
+  bucket_name_override = local.cfg.modules.s3.name
+
+  # Optional controls with safe defaults
+  versioning    = try(local.cfg.modules.s3.versioning, true)
+  block_public  = try(local.cfg.modules.s3.block_public, true)
+  force_destroy = try(local.cfg.modules.s3.force_destroy, false)
+  kms_key_id    = try(local.cfg.modules.s3.kms_key_id, null)
+
+  # Simple tag fan-out
+  tags_extra = {
+    RequestID   = local.cfg.request_id
+    Requester   = local.cfg.requester
+    Environment = local.cfg.environment
+    Service     = "S3"
+  }
 }
