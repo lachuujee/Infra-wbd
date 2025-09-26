@@ -1,14 +1,13 @@
 ############################################
-# AZs (safe, null-proof, one-line ternary)
+# AZs (safe, null-proof)
 ############################################
 data "aws_availability_zones" "available" {
   state = "available"
 }
 
 locals {
-  # if azs is null -> [], else the provided list
-  _azs_input   = coalesce(var.azs, [])
-  _azs_default = slice(data.aws_availability_zones.available.names, 0, 2)
+  _azs_input    = coalesce(var.azs, [])
+  _azs_default  = slice(data.aws_availability_zones.available.names, 0, 2)
   azs_effective = length(local._azs_input) >= 2 ? local._azs_input : local._azs_default
 
   az0 = local.azs_effective[0]
@@ -19,7 +18,7 @@ locals {
 # Prefer CIDR unless you explicitly null it
 ############################################
 locals {
-  cidr_is_set = var.cidr_block != null && trim(var.cidr_block) != ""
+  cidr_is_set = (var.cidr_block != null && trimspace(var.cidr_block) != "")
   use_ipam    = !local.cidr_is_set
 }
 
@@ -36,7 +35,9 @@ resource "aws_vpc" "this" {
 
   lifecycle {
     precondition {
-      condition     = local.use_ipam ? (var.ipam_pool_id != null && trim(var.ipam_pool_id) != "") : (local.cidr_is_set)
+      condition = local.use_ipam
+        ? (var.ipam_pool_id != null && trimspace(var.ipam_pool_id) != "")
+        : (local.cidr_is_set)
       error_message = "Provide either a valid cidr_block OR (ipam_pool_id + vpc_netmask_length)."
     }
   }
@@ -141,7 +142,7 @@ resource "aws_route" "public_default" {
 }
 
 resource "aws_route_table_association" "public_assoc" {
-  for_each      = aws_subnet.public
+  for_each       = aws_subnet.public
   subnet_id      = each.value.id
   route_table_id = aws_route_table.public[0].id
 }
@@ -216,7 +217,4 @@ resource "aws_route_table_association" "private_assoc" {
   route_table_id = local.rtb_by_role[each.value.role]
 }
 
-############################################
-# NACL, Flow Logs (unchanged from your version)
-############################################
-# ... keep your existing NACL and Flow Logs blocks ...
+# Keep your NACL + Flow Logs blocks as you had them
