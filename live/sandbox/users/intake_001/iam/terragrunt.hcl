@@ -3,87 +3,26 @@ terraform {
 }
 
 locals {
-  # Detect inputs.json once
-  inputs_path = find_in_parent_folders("inputs.json", "NOT_FOUND")
-  has_file    = local.inputs_path != "NOT_FOUND" && fileexists(local.inputs_path)
-
-  # Helper to read the file repeatedly (Terragrunt allows this)
-  # NOTE: We *only* call read_tfvars_file() when has_file=true
-  # so condition branches always return the same type.
-  sandbox_raw = local.has_file
-    ? try(
-        # If it's a map: take .sandbox_name
-        read_tfvars_file(local.inputs_path).sandbox_name,
-        # If it's a bare string: use that string
-        read_tfvars_file(local.inputs_path)
-      )
-    : "sandbox"
-
-  # Clean for IAM: keep case/underscores, just convert spaces -> underscores
-  name_base = replace(trimspace(local.sandbox_raw), " ", "_")
-  role_base = "${local.name_base}_iam"
-
-  # Region (string)
-  region_val = local.has_file
-    ? try(read_tfvars_file(local.inputs_path).aws_region, "us-east-1")
-    : "us-east-1"
-
-  # Assume services (list(string))
-  assume_services_val = local.has_file
-    ? try(read_tfvars_file(local.inputs_path).modules.iam.assume_services, ["ec2.amazonaws.com"])
-    : ["ec2.amazonaws.com"]
-
-  # Managed policies (list(string))
-  managed_policies_val = local.has_file
-    ? try(read_tfvars_file(local.inputs_path).modules.iam.managed_policy_arns, ["arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"])
-    : ["arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"]
-
-  # IAM path (string)
-  path_val = local.has_file
-    ? try(read_tfvars_file(local.inputs_path).modules.iam.path, "/")
-    : "/"
-
-  # Tags support (map(string))
-  common_tags_val = local.has_file
-    ? try(read_tfvars_file(local.inputs_path).common_tags, {})
-    : {}
-
-  # Tag fields (strings)
-  request_id_val = local.has_file
-    ? try(read_tfvars_file(local.inputs_path).request_id, "unknown")
-    : "unknown"
-
-  requester_val = local.has_file
-    ? try(read_tfvars_file(local.inputs_path).requester, "unknown")
-    : "unknown"
-
-  environment_val = local.has_file
-    ? try(read_tfvars_file(local.inputs_path).environment, "sandbox")
-    : "sandbox"
+  cfg = read_tfvars_file(find_in_parent_folders("inputs.json"))
 }
 
 inputs = {
-  # Provider region into the module
-  region     = local.region_val
+  # provider region for the module
+  region    = "us-east-1"
 
-  # Role identity (overrides module defaults)
-  name       = local.role_base
-  role_name  = local.role_base
+  # take the role name exactly from JSON (which already follows your sandbox naming)
+  name      = local.cfg.modules.iam.name
+  role_name = local.cfg.modules.iam.name
 
-  # Trust & permissions
-  assume_services      = local.assume_services_val
-  managed_policy_arns  = local.managed_policies_val
+  # trust & permissions (use JSON if provided, else sane defaults)
+  assume_services      = try(local.cfg.modules.iam.assume_services, ["ec2.amazonaws.com"])
+  managed_policy_arns  = try(local.cfg.modules.iam.managed_policy_arns, ["arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"])
+  path                 = try(local.cfg.modules.iam.path, "/")
 
-  path = local.path_val
-
-  # Tags
-  tags_extra = merge(
-    local.common_tags_val,
-    {
-      RequestID   = local.request_id_val
-      Requester   = local.requester_val
-      Environment = local.environment_val
-      Service     = "IAM"
-    }
-  )
+  tags_extra = {
+    RequestID   = local.cfg.request_id
+    Requester   = local.cfg.requester
+    Environment = local.cfg.environment
+    Service     = "IAM"
+  }
 }
