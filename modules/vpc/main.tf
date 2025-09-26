@@ -1,21 +1,19 @@
 ############################################
-# Helper: AZs
+# Helper: AZs (auto-pick for current region)
 ############################################
 data "aws_availability_zones" "available" {
   state = "available"
 }
 
 locals {
-  # SINGLE-LINE TERNARY (no dangling "? var.azs")
-  azs_effective = (var.azs != null && length(var.azs) >= 2)
-    ? var.azs
-    : slice(data.aws_availability_zones.available.names, 0, 2)
-  az0 = local.azs_effective[0]
-  az1 = local.azs_effective[1]
+  # Keep the whole ternary on ONE line to avoid HCL parse errors
+  azs_effective = (var.azs != null && length(var.azs) >= 2) ? var.azs : slice(data.aws_availability_zones.available.names, 0, 2)
+  az0           = local.azs_effective[0]
+  az1           = local.azs_effective[1]
 }
 
 ############################################
-# Choose addressing mode: IPAM (when cidr_block=null) or CIDR (default)
+# Addressing mode: CIDR by default; IPAM when cidr_block = null
 ############################################
 locals {
   use_ipam = var.cidr_block == null
@@ -24,6 +22,7 @@ locals {
 resource "aws_vpc" "this" {
   count = var.enabled ? 1 : 0
 
+  # CIDR (default) vs IPAM (only when cidr_block = null)
   ipv4_ipam_pool_id   = local.use_ipam ? var.ipam_pool_id       : null
   ipv4_netmask_length = local.use_ipam ? var.vpc_netmask_length : null
   cidr_block          = local.use_ipam ? null                   : var.cidr_block
@@ -52,22 +51,10 @@ locals {
 # - 2 public  /28 subnets (≈16 IPs)
 ############################################
 locals {
-  private_cidrs = var.enabled ? [
-    cidrsubnet(local.vpc_cidr, 3, 0),
-    cidrsubnet(local.vpc_cidr, 3, 1),
-    cidrsubnet(local.vpc_cidr, 3, 2),
-    cidrsubnet(local.vpc_cidr, 3, 3),
-    cidrsubnet(local.vpc_cidr, 3, 4),
-    cidrsubnet(local.vpc_cidr, 3, 5)
-  ] : []
-
-  public_parent = var.enabled ? cidrsubnet(local.vpc_cidr, 4, 15) : null
-  public_cidrs  = var.enabled ? [
-    cidrsubnet(local.public_parent, 4, 0),
-    cidrsubnet(local.public_parent, 4, 1)
-  ] : []
-
-  private_def = var.enabled ? {
+  private_cidrs  = var.enabled ? [cidrsubnet(local.vpc_cidr, 3, 0), cidrsubnet(local.vpc_cidr, 3, 1), cidrsubnet(local.vpc_cidr, 3, 2), cidrsubnet(local.vpc_cidr, 3, 3), cidrsubnet(local.vpc_cidr, 3, 4), cidrsubnet(local.vpc_cidr, 3, 5)] : []
+  public_parent  = var.enabled ? cidrsubnet(local.vpc_cidr, 4, 15) : null
+  public_cidrs   = var.enabled ? [cidrsubnet(local.public_parent, 4, 0), cidrsubnet(local.public_parent, 4, 1)] : []
+  private_def    = var.enabled ? {
     "app-a" = { cidr = local.private_cidrs[0], az = local.az0, role = "app" }
     "app-b" = { cidr = local.private_cidrs[1], az = local.az1, role = "app" }
     "api-a" = { cidr = local.private_cidrs[2], az = local.az0, role = "api" }
@@ -197,7 +184,8 @@ resource "aws_subnet" "private" {
   availability_zone = each.value.az
 
   tags = merge(local.common_tags, {
-    Name    = "${local.name_prefix}-private-${each.value.role}-${substr(each.key, -1, 1)}"
+    # get 'a' / 'b' suffix safely without substr negatives
+    Name    = "${local.name_prefix}-private-${each.value.role}-${split(each.key, "-")[1]}"
     Role    = upper(each.value.role)
     Service = "SubnetPrivate"
   })
@@ -218,7 +206,7 @@ resource "aws_route_table_association" "private_assoc" {
 }
 
 ############################################
-# NACL
+# NACL + Flow Logs
 ############################################
 resource "aws_network_acl" "vpc_acl" {
   count  = var.enabled ? 1 : 0
@@ -262,9 +250,6 @@ resource "aws_network_acl_association" "assoc_private" {
   subnet_id      = each.value.id
 }
 
-############################################
-# Flow Logs
-############################################
 data "aws_iam_policy_document" "flowlogs_trust" {
   statement {
     effect  = "Allow"
