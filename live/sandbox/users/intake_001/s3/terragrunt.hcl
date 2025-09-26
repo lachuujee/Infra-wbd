@@ -3,25 +3,24 @@ terraform {
 }
 
 locals {
-  # Use the supported loader (fixes "unknown function read_json")
   cfg = read_tfvars_file(find_in_parent_folders("inputs.json"))
+
+  # sanitise just like we did elsewhere (used by the module anyway)
+  name_clean = regexreplace(lower(try(local.cfg.modules.s3.name, "s3")), "[^a-z0-9-]", "-")
 }
 
 inputs = {
-  # Keep region handling same as IAM module
   region               = try(local.cfg.aws_region, "us-east-1")
 
-  enabled              = try(local.cfg.modules.s3.enabled, true)
-  name                 = try(local.cfg.modules.s3.name, "s3")
-  request_id           = try(local.cfg.request_id, "unknown")
+  # force it (no "unknown" fallback) so bad names don't slip through
+  request_id           = local.cfg.request_id
 
-  # Controls
+  enabled              = try(local.cfg.modules.s3.enabled, true)
+  name                 = local.name_clean
   versioning           = try(local.cfg.modules.s3.versioning, true)
   block_public         = try(local.cfg.modules.s3.block_public, true)
   force_destroy        = try(local.cfg.modules.s3.force_destroy, false)
   kms_key_id           = try(local.cfg.modules.s3.kms_key_id, null)
-
-  # Optional hard override for the actual bucket name
   bucket_name_override = try(local.cfg.modules.s3.bucket_name_override, null)
 
   tags_extra = merge(
