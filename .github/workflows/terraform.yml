@@ -12,14 +12,24 @@ jobs:
   tf:
     runs-on: ubuntu-latest
     env:
-      AWS_ACCESS_KEY_ID:     ${{ fromJSON(secrets.WBD_SANDBOX_SECRET).AWS_ACCESS_KEY_ID }}
-      AWS_SECRET_ACCESS_KEY: ${{ fromJSON(secrets.WBD_SANDBOX_SECRET).AWS_SECRET_ACCESS_KEY }}
-      AWS_DEFAULT_REGION:    us-east-1
-      INTAKE_DIR:            live/sandbox/users/${{ github.event.inputs.intake_id }}
+      AWS_DEFAULT_REGION: us-east-1
+      INTAKE_DIR: live/sandbox/users/${{ github.event.inputs.intake_id }}
 
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
+
+      # Pull AWS creds from the single JSON secret: INFRA_WBD_SECRET
+      - name: Export AWS credentials from INFRA_WBD_SECRET
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update -y && sudo apt-get install -y jq
+          fi
+          creds='${{ secrets.INFRA_WBD_SECRET }}'
+          echo "AWS_ACCESS_KEY_ID=$(jq -r '.AWS_ACCESS_KEY_ID' <<< \"$creds\")" >> "$GITHUB_ENV"
+          echo "AWS_SECRET_ACCESS_KEY=$(jq -r '.AWS_SECRET_ACCESS_KEY' <<< \"$creds\")" >> "$GITHUB_ENV"
 
       - name: Show caller identity (should be DESTINATION account)
         run: aws sts get-caller-identity
