@@ -1,63 +1,39 @@
-variable "enabled" {
-  type    = bool
-  default = true
+# Keep ordering for run-all (if you need IAM first)
+dependencies {
+  paths = ["../iam"]
 }
 
-# Used for naming, e.g. SBX_INTAKE_ID_001
-variable "sandbox_name" {
-  type = string
-}
-
-# Optional override for Name prefix; if null we use sandbox_name
-variable "name_prefix_override" {
-  type    = string
-  default = null
-}
-
-# --- Addressing options ---
-# A) Default to your IPAM pool (fallback when no CIDR is provided)
-variable "ipam_pool_id" {
-  type    = string
-  default = "ipam-pool-03f8473dfbe9f6504"  # <— your pool ID (hard default)
-}
-
-variable "vpc_netmask_length" {
-  type    = number
-  default = 16
-}
-
-# B) Classic CIDR (if this is set, module ignores IPAM fields)
-variable "cidr_block" {
-  type    = string
-  default = null
-}
-
-# Availability Zones (e.g. ["us-east-1a","us-east-1b"]); if null, module auto-picks 2
-variable "azs" {
-  type    = list(string)
-  default = null
-}
-
-# CloudWatch log retention (days) for VPC Flow Logs
-variable "flow_logs_retention_days" {
-  type    = number
-  default = 30
-}
-
-# Extra tags merged into all resources
-variable "tags_extra" {
-  type    = map(string)
-  default = {}
+terraform {
+  source = "../../../../../modules/vpc"
 }
 
 locals {
-  name_prefix = coalesce(var.name_prefix_override, trimspace(var.sandbox_name))
+  # Fix: Terragrunt doesn't have read_json
+  cfg = read_tfvars_file(find_in_parent_folders("inputs.json"))
+}
 
-  common_tags = merge(
+inputs = {
+  # Align region handling across stacks
+  region                   = try(local.cfg.aws_region, "us-east-1")
+
+  enabled                  = try(local.cfg.modules.vpc.enabled, true)
+  sandbox_name             = try(local.cfg.sandbox_name, "sandbox")
+
+  # If a CIDR is provided, module uses it and ignores IPAM
+  cidr_block               = try(local.cfg.modules.vpc.cidr_block, null)
+
+  # Optional AZs (else module chooses first two)
+  azs                      = try(local.cfg.modules.vpc.azs, null)
+
+  flow_logs_retention_days = try(local.cfg.modules.vpc.flow_logs_retention_days, 30)
+
+  tags_extra = merge(
+    try(local.cfg.common_tags, {}),
     {
-      Name    = "${local.name_prefix}-vpc"
-      Service = "VPC"
-    },
-    var.tags_extra
+      RequestID   = try(local.cfg.request_id,   "unknown")
+      Requester   = try(local.cfg.requester,    "unknown")
+      Environment = try(local.cfg.environment,  "sandbox")
+      Service     = "VPC"
+    }
   )
 }
