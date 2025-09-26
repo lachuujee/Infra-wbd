@@ -5,13 +5,19 @@ terraform {
 locals {
   # Find and read inputs.json safely
   inputs_path = find_in_parent_folders("inputs.json", "NOT_FOUND")
-  cfg_raw     = (local.inputs_path != "NOT_FOUND" && fileexists(local.inputs_path)) ? read_tfvars_file(local.inputs_path) : {}
+  cfg_raw = (
+    local.inputs_path != "NOT_FOUND" && fileexists(local.inputs_path)
+  ) ? (
+    can(read_tfvars_file(local.inputs_path)) && type(read_tfvars_file(local.inputs_path)) == "map"
+      ? read_tfvars_file(local.inputs_path)
+      : { value = read_tfvars_file(local.inputs_path) }
+  ) : {}
 
   # sandbox_name can be:
   # - cfg_raw.sandbox_name (map)
   # - cfg_raw["sandbox_name"] (map with key lookup)
-  # - or cfg_raw itself if the file is just a string
-  sandbox_raw = try(local.cfg_raw.sandbox_name, try(local.cfg_raw["sandbox_name"], try(local.cfg_raw, "sandbox")))
+  # - or cfg_raw itself if the file is just a string (now wrapped as {value=...})
+  sandbox_raw = try(local.cfg_raw.sandbox_name, try(local.cfg_raw["sandbox_name"], try(local.cfg_raw.value, try(local.cfg_raw, "sandbox"))))
 
   # IAM role name: keep case/underscores, convert spaces to underscores
   name_base = replace(trimspace(local.sandbox_raw), " ", "_")
