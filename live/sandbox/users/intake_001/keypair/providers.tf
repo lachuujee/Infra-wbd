@@ -21,5 +21,6 @@ terraform {
 }
 
 provider "aws" {
+  # Align with other modules: take region from module input
   region = var.region
 }
