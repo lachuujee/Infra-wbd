@@ -21,5 +21,5 @@ terraform {
 # - If Terragrunt passes var.region (from inputs.json.aws_region), use it
 # - Else default to us-east-1
 provider "aws" {
-  region = coalesce(var.region, "us-east-1")
+  region = var.region != null && trim(var.region) != "" ? var.region : "us-east-1"
 }
