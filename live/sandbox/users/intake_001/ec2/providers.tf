@@ -17,5 +17,6 @@ terraform {
 }
 
 provider "aws" {
-  region = "us-east-1"
+  # align with IAM/S3: take region from module input
+  region = var.region
 }
