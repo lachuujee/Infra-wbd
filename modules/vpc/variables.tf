@@ -9,7 +9,6 @@ variable "enabled" {
   default = true
 }
 
-# Used for naming, e.g. SBX_INTAKE_ID_001
 variable "sandbox_name" {
   type = string
 }
@@ -19,13 +18,13 @@ variable "name_prefix_override" {
   default = null
 }
 
-# Prefer CIDR by default; set cidr_block = null to use IPAM instead
+# Prefer CIDR by default; set to null to switch to IPAM
 variable "cidr_block" {
   type    = string
   default = "10.0.0.0/16"
 }
 
-# IPAM settings (used only if cidr_block is null or empty)
+# IPAM settings (used only if cidr_block is null/empty)
 variable "ipam_pool_id" {
   type    = string
   default = null
@@ -36,7 +35,7 @@ variable "vpc_netmask_length" {
   default = 16
 }
 
-# Optional AZs (e.g. ["us-east-1a","us-east-1b"]); leave null to auto-pick 2
+# Optional AZs; if null/len<2 we auto-pick 2 from the region
 variable "azs" {
   type    = list(string)
   default = null
