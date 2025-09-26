@@ -1,15 +1,15 @@
 variable "customer" {
-  type = string
+  type    = string
   default = null
 }
 
 variable "environment" {
-  type = string
+  type    = string
   default = null
 }
 
 variable "region" {
-  type = string
+  type    = string
   default = null
 }
 
@@ -23,6 +23,12 @@ variable "sandbox_name" {
 variable "key_name_override" {
   type    = string
   default = null
+}
+
+# Module on/off (set by tiny TG file). Default off so missing JSON never breaks.
+variable "enabled" {
+  type    = bool
+  default = false
 }
 
 # Crypto
@@ -52,7 +58,7 @@ locals {
     var.sandbox_name != null && trimspace(var.sandbox_name) != ""
   ) ? trimspace(var.sandbox_name) : "${var.customer}_${var.environment}"
 
-  # Final KeyPair name
+  # Final KeyPair (and Secret) name: "<name_base>-keypair"
   key_name = coalesce(var.key_name_override, "${local.name_base}-keypair")
 
   common_tags = merge(
