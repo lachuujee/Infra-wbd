@@ -3,11 +3,14 @@ terraform {
 }
 
 locals {
-  # reads JSON/Tfvars and returns a map
+  # Simple fix: read inputs.json (tfvars JSON) from a parent
   cfg = read_tfvars_file(find_in_parent_folders("inputs.json"))
 }
 
 inputs = {
+  # >>> IMPORTANT: pass region into the module <<<
+  region               = try(local.cfg.aws_region, "us-east-1")
+
   enabled              = try(local.cfg.modules.iam.enabled, true)
   name                 = try(local.cfg.modules.iam.name, "iam")
   role_name            = try(local.cfg.modules.iam.role_name, "tg-exec-role")
