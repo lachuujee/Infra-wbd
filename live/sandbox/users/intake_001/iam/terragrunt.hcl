@@ -3,39 +3,67 @@ terraform {
 }
 
 locals {
-  # Find and read inputs.json safely
+  # Detect inputs.json once
   inputs_path = find_in_parent_folders("inputs.json", "NOT_FOUND")
-  cfg_raw = (
-    local.inputs_path != "NOT_FOUND" && fileexists(local.inputs_path)
-  ) ? (
-    can(read_tfvars_file(local.inputs_path)) && type(read_tfvars_file(local.inputs_path)) == "map"
-      ? read_tfvars_file(local.inputs_path)
-      : { value = read_tfvars_file(local.inputs_path) }
-  ) : {}
+  has_file    = local.inputs_path != "NOT_FOUND" && fileexists(local.inputs_path)
 
-  # sandbox_name can be:
-  # - cfg_raw.sandbox_name (map)
-  # - cfg_raw["sandbox_name"] (map with key lookup)
-  # - or cfg_raw itself if the file is just a string (now wrapped as {value=...})
-  sandbox_raw = try(local.cfg_raw.sandbox_name, try(local.cfg_raw["sandbox_name"], try(local.cfg_raw.value, try(local.cfg_raw, "sandbox"))))
+  # Helper to read the file repeatedly (Terragrunt allows this)
+  # NOTE: We *only* call read_tfvars_file() when has_file=true
+  # so condition branches always return the same type.
+  sandbox_raw = local.has_file
+    ? try(
+        # If it's a map: take .sandbox_name
+        read_tfvars_file(local.inputs_path).sandbox_name,
+        # If it's a bare string: use that string
+        read_tfvars_file(local.inputs_path)
+      )
+    : "sandbox"
 
-  # IAM role name: keep case/underscores, convert spaces to underscores
+  # Clean for IAM: keep case/underscores, just convert spaces -> underscores
   name_base = replace(trimspace(local.sandbox_raw), " ", "_")
   role_base = "${local.name_base}_iam"
 
-  # Pull other values safely with fallbacks
-  region_val             = try(local.cfg_raw.aws_region, "us-east-1")
-  assume_services_val    = try(local.cfg_raw.modules.iam.assume_services, ["ec2.amazonaws.com"])
-  managed_policies_val   = try(local.cfg_raw.modules.iam.managed_policy_arns, ["arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"])
-  path_val               = try(local.cfg_raw.modules.iam.path, "/")
-  common_tags_val        = try(local.cfg_raw.common_tags, {})
-  request_id_val         = try(local.cfg_raw.request_id, "unknown")
-  requester_val          = try(local.cfg_raw.requester, "unknown")
-  environment_val        = try(local.cfg_raw.environment, "sandbox")
+  # Region (string)
+  region_val = local.has_file
+    ? try(read_tfvars_file(local.inputs_path).aws_region, "us-east-1")
+    : "us-east-1"
+
+  # Assume services (list(string))
+  assume_services_val = local.has_file
+    ? try(read_tfvars_file(local.inputs_path).modules.iam.assume_services, ["ec2.amazonaws.com"])
+    : ["ec2.amazonaws.com"]
+
+  # Managed policies (list(string))
+  managed_policies_val = local.has_file
+    ? try(read_tfvars_file(local.inputs_path).modules.iam.managed_policy_arns, ["arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"])
+    : ["arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"]
+
+  # IAM path (string)
+  path_val = local.has_file
+    ? try(read_tfvars_file(local.inputs_path).modules.iam.path, "/")
+    : "/"
+
+  # Tags support (map(string))
+  common_tags_val = local.has_file
+    ? try(read_tfvars_file(local.inputs_path).common_tags, {})
+    : {}
+
+  # Tag fields (strings)
+  request_id_val = local.has_file
+    ? try(read_tfvars_file(local.inputs_path).request_id, "unknown")
+    : "unknown"
+
+  requester_val = local.has_file
+    ? try(read_tfvars_file(local.inputs_path).requester, "unknown")
+    : "unknown"
+
+  environment_val = local.has_file
+    ? try(read_tfvars_file(local.inputs_path).environment, "sandbox")
+    : "sandbox"
 }
 
 inputs = {
-  # Provider region for the module
+  # Provider region into the module
   region     = local.region_val
 
   # Role identity (overrides module defaults)
@@ -43,9 +71,10 @@ inputs = {
   role_name  = local.role_base
 
   # Trust & permissions
-  assume_services     = local.assume_services_val
-  managed_policy_arns = local.managed_policies_val
-  path                = local.path_val
+  assume_services      = local.assume_services_val
+  managed_policy_arns  = local.managed_policies_val
+
+  path = local.path_val
 
   # Tags
   tags_extra = merge(
