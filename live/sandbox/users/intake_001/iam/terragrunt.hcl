@@ -1,34 +1,53 @@
-# live/sandbox/users/intake_001/iam/terragrunt.hcl
 terraform {
   source = "../../../../../modules/iam"
 }
 
 locals {
-  # Locate and read inputs.json safely (single-line ternary fixes the parse error)
+  # Find and read inputs.json safely
   inputs_path = find_in_parent_folders("inputs.json", "NOT_FOUND")
-  cfg = (local.inputs_path != "NOT_FOUND" && fileexists(local.inputs_path)) ? read_tfvars_file(local.inputs_path) : {}
+  cfg_raw     = (local.inputs_path != "NOT_FOUND" && fileexists(local.inputs_path)) ? read_tfvars_file(local.inputs_path) : {}
 
-  # Derive role name from sandbox_name (spaces -> underscores; keep case/_)
-  raw_name  = try(local.cfg.sandbox_name,
-             try(local.cfg["sandbox_name"],
-             try(local.cfg, "sandbox")))
-  name_base = replace(trimspace(local.raw_name), " ", "_")
+  # sandbox_name can be:
+  # - cfg_raw.sandbox_name (map)
+  # - cfg_raw["sandbox_name"] (map with key lookup)
+  # - or cfg_raw itself if the file is just a string
+  sandbox_raw = try(local.cfg_raw.sandbox_name, try(local.cfg_raw["sandbox_name"], try(local.cfg_raw, "sandbox")))
+
+  # IAM role name: keep case/underscores, convert spaces to underscores
+  name_base = replace(trimspace(local.sandbox_raw), " ", "_")
   role_base = "${local.name_base}_iam"
+
+  # Pull other values safely with fallbacks
+  region_val             = try(local.cfg_raw.aws_region, "us-east-1")
+  assume_services_val    = try(local.cfg_raw.modules.iam.assume_services, ["ec2.amazonaws.com"])
+  managed_policies_val   = try(local.cfg_raw.modules.iam.managed_policy_arns, ["arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"])
+  path_val               = try(local.cfg_raw.modules.iam.path, "/")
+  common_tags_val        = try(local.cfg_raw.common_tags, {})
+  request_id_val         = try(local.cfg_raw.request_id, "unknown")
+  requester_val          = try(local.cfg_raw.requester, "unknown")
+  environment_val        = try(local.cfg_raw.environment, "sandbox")
 }
 
 inputs = {
-  region               = try(local.cfg.aws_region, "us-east-1")
-  name                 = local.role_base
-  role_name            = local.role_base
-  assume_services      = try(local.cfg.modules.iam.assume_services, ["ec2.amazonaws.com"])
-  managed_policy_arns  = try(local.cfg.modules.iam.managed_policy_arns, ["arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"])
-  path                 = try(local.cfg.modules.iam.path, "/")
+  # Provider region for the module
+  region     = local.region_val
+
+  # Role identity (overrides module defaults)
+  name       = local.role_base
+  role_name  = local.role_base
+
+  # Trust & permissions
+  assume_services     = local.assume_services_val
+  managed_policy_arns = local.managed_policies_val
+  path                = local.path_val
+
+  # Tags
   tags_extra = merge(
-    try(local.cfg.common_tags, {}),
+    local.common_tags_val,
     {
-      RequestID   = try(local.cfg.request_id,   "unknown")
-      Requester   = try(local.cfg.requester,    "unknown")
-      Environment = try(local.cfg.environment,  "sandbox")
+      RequestID   = local.request_id_val
+      Requester   = local.requester_val
+      Environment = local.environment_val
       Service     = "IAM"
     }
   )
