@@ -19,7 +19,7 @@
       "enabled": true
     },
     "s3": {
-      "name": "SBX_INTAKE_ID_001-s3",
+      "name": "sbx-intake-id-001-s3",
       "enabled": true
     },
     "ec2": {
