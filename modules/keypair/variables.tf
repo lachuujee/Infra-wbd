@@ -1,34 +1,16 @@
-variable "customer" {
-  type    = string
-  default = null
-}
-
-variable "environment" {
-  type    = string
-  default = null
-}
-
-variable "region" {
-  type    = string
-  default = null
-}
-
-# Optional: if present in inputs.json, use for naming (<sandbox_name>-keypair)
 variable "sandbox_name" {
-  type    = string
-  default = null
+  type = string
 }
 
-# Optional override; else we use <sandbox_name>-keypair or <customer>_<environment>-keypair
-variable "key_name_override" {
-  type    = string
-  default = null
-}
-
-# Module on/off (set by tiny TG file). Default off so missing JSON never breaks.
 variable "enabled" {
   type    = bool
   default = false
+}
+
+# Optional override; if set, it wins over "<sandbox_name>-keypair"
+variable "key_name_override" {
+  type    = string
+  default = null
 }
 
 # Crypto
@@ -46,26 +28,20 @@ variable "rsa_bits" {
   default = 4096
 }
 
-# Extra tags merged into all resources
+# Extra tags merged into all resources (e.g., RequestID, Requester, Environment)
 variable "tags_extra" {
   type    = map(string)
   default = {}
 }
 
 locals {
-  # Prefer sandbox_name when provided; else fall back to "<customer>_<environment>"
-  name_base = (
-    var.sandbox_name != null && trimspace(var.sandbox_name) != ""
-  ) ? trimspace(var.sandbox_name) : "${var.customer}_${var.environment}"
-
-  # Final KeyPair (and Secret) name: "<name_base>-keypair"
-  key_name = coalesce(var.key_name_override, "${local.name_base}-keypair")
+  # Final KeyPair (and Secret) name: "<sandbox_name>-keypair" unless overridden
+  name_base = trimspace(var.sandbox_name)
+  key_name  = coalesce(var.key_name_override, "${local.name_base}-keypair")
 
   common_tags = merge(
     {
-      Name        = local.key_name
-      Customer    = coalesce(var.customer, "")
-      Environment = coalesce(var.environment, "")
+      Name = local.key_name
     },
     var.tags_extra
   )
