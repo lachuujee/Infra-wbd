@@ -1,30 +1,29 @@
 ############################################
-# AZs (safe, null-proof)
+# AZs (null-safe, single-line ternary)
 ############################################
-data "aws_availability_zones" "available" {
-  state = "available"
-}
+data "aws_availability_zones" "available" { state = "available" }
 
 locals {
-  _azs_input    = coalesce(var.azs, [])
-  _azs_default  = slice(data.aws_availability_zones.available.names, 0, 2)
-  azs_effective = length(local._azs_input) >= 2 ? local._azs_input : local._azs_default
-
-  az0 = local.azs_effective[0]
-  az1 = local.azs_effective[1]
+  azs_input    = coalesce(var.azs, [])
+  azs_default  = slice(data.aws_availability_zones.available.names, 0, 2)
+  azs_effective = (length(local.azs_input) >= 2) ? local.azs_input : local.azs_default
+  az0           = local.azs_effective[0]
+  az1           = local.azs_effective[1]
 }
 
 ############################################
-# Prefer CIDR unless you explicitly null it
+# Addressing choice: CIDR by default, IPAM only if cidr_block is null/empty
 ############################################
 locals {
-  cidr_is_set = (var.cidr_block != null && trimspace(var.cidr_block) != "")
+  cidr_trim = (var.cidr_block != null) ? trimspace(var.cidr_block) : ""
+  cidr_is_set = (local.cidr_trim != "")
   use_ipam    = !local.cidr_is_set
 }
 
 resource "aws_vpc" "this" {
   count = var.enabled ? 1 : 0
 
+  # Mutually exclusive
   ipv4_ipam_pool_id   = local.use_ipam ? var.ipam_pool_id       : null
   ipv4_netmask_length = local.use_ipam ? var.vpc_netmask_length : null
   cidr_block          = local.use_ipam ? null                   : var.cidr_block
@@ -35,10 +34,8 @@ resource "aws_vpc" "this" {
 
   lifecycle {
     precondition {
-      condition = local.use_ipam
-        ? (var.ipam_pool_id != null && trimspace(var.ipam_pool_id) != "")
-        : (local.cidr_is_set)
-      error_message = "Provide either a valid cidr_block OR (ipam_pool_id + vpc_netmask_length)."
+      condition     = local.use_ipam ? (var.ipam_pool_id != null && trimspace(var.ipam_pool_id) != "") : local.cidr_is_set
+      error_message = "Provide either non-empty cidr_block OR (ipam_pool_id + vpc_netmask_length) when using IPAM."
     }
   }
 }
@@ -78,7 +75,7 @@ locals {
 }
 
 ############################################
-# Internet Gateway
+# IGW
 ############################################
 resource "aws_internet_gateway" "igw" {
   count  = var.enabled ? 1 : 0
@@ -100,10 +97,7 @@ resource "aws_subnet" "public" {
   availability_zone       = each.value.az
   map_public_ip_on_launch = true
 
-  tags = merge(local.common_tags, {
-    Name    = "${local.name_prefix}-public-${each.key}"
-    Service = "SubnetPublic"
-  })
+  tags = merge(local.common_tags, { Name = "${local.name_prefix}-public-${each.key}", Service = "SubnetPublic" })
 }
 
 ############################################
@@ -128,10 +122,7 @@ resource "aws_nat_gateway" "nat" {
 resource "aws_route_table" "public" {
   count = var.enabled ? 1 : 0
   vpc_id = local.vpc_id
-  tags = merge(local.common_tags, {
-    Name    = "${local.name_prefix}-rtb-public"
-    Service = "RouteTablePublic"
-  })
+  tags   = merge(local.common_tags, { Name = "${local.name_prefix}-rtb-public", Service = "RouteTablePublic" })
 }
 
 resource "aws_route" "public_default" {
@@ -147,69 +138,26 @@ resource "aws_route_table_association" "public_assoc" {
   route_table_id = aws_route_table.public[0].id
 }
 
-resource "aws_route_table" "private_app" {
-  count = var.enabled ? 1 : 0
-  vpc_id = local.vpc_id
-  tags = merge(local.common_tags, { Name = "${local.name_prefix}-rtb-private-app", Service = "RouteTablePrivate" })
-}
+resource "aws_route_table" "private_app" { count = var.enabled ? 1 : 0  vpc_id = local.vpc_id  tags = merge(local.common_tags, { Name = "${local.name_prefix}-rtb-private-app", Service = "RouteTablePrivate" }) }
+resource "aws_route_table" "private_api" { count = var.enabled ? 1 : 0  vpc_id = local.vpc_id  tags = merge(local.common_tags, { Name = "${local.name_prefix}-rtb-private-api", Service = "RouteTablePrivate" }) }
+resource "aws_route_table" "private_db"  { count = var.enabled ? 1 : 0  vpc_id = local.vpc_id  tags = merge(local.common_tags, { Name = "${local.name_prefix}-rtb-private-db",  Service = "RouteTablePrivate" }) }
 
-resource "aws_route_table" "private_api" {
-  count = var.enabled ? 1 : 0
-  vpc_id = local.vpc_id
-  tags = merge(local.common_tags, { Name = "${local.name_prefix}-rtb-private-api", Service = "RouteTablePrivate" })
-}
-
-resource "aws_route_table" "private_db" {
-  count = var.enabled ? 1 : 0
-  vpc_id = local.vpc_id
-  tags = merge(local.common_tags, { Name = "${local.name_prefix}-rtb-private-db", Service = "RouteTablePrivate" })
-}
-
-resource "aws_route" "private_app_default" {
-  count                  = var.enabled ? 1 : 0
-  route_table_id         = aws_route_table.private_app[0].id
-  destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.nat[0].id
-}
-
-resource "aws_route" "private_api_default" {
-  count                  = var.enabled ? 1 : 0
-  route_table_id         = aws_route_table.private_api[0].id
-  destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.nat[0].id
-}
-
-resource "aws_route" "private_db_default" {
-  count                  = var.enabled ? 1 : 0
-  route_table_id         = aws_route_table.private_db[0].id
-  destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.nat[0].id
-}
+resource "aws_route" "private_app_default" { count = var.enabled ? 1 : 0  route_table_id = aws_route_table.private_app[0].id  destination_cidr_block = "0.0.0.0/0"  nat_gateway_id = aws_nat_gateway.nat[0].id }
+resource "aws_route" "private_api_default" { count = var.enabled ? 1 : 0  route_table_id = aws_route_table.private_api[0].id  destination_cidr_block = "0.0.0.0/0"  nat_gateway_id = aws_nat_gateway.nat[0].id }
+resource "aws_route" "private_db_default"  { count = var.enabled ? 1 : 0  route_table_id = aws_route_table.private_db[0].id   destination_cidr_block = "0.0.0.0/0"  nat_gateway_id = aws_nat_gateway.nat[0].id }
 
 ############################################
 # Private subnets (6) — /23 + associations
 ############################################
 resource "aws_subnet" "private" {
   for_each = local.private_def
-
   vpc_id            = local.vpc_id
   cidr_block        = each.value.cidr
   availability_zone = each.value.az
-
-  tags = merge(local.common_tags, {
-    Name    = "${local.name_prefix}-private-${each.value.role}-${substr(each.key, -1, 1)}"
-    Role    = upper(each.value.role)
-    Service = "SubnetPrivate"
-  })
+  tags = merge(local.common_tags, { Name = "${local.name_prefix}-private-${each.value.role}-${substr(each.key, -1, 1)}", Role = upper(each.value.role), Service = "SubnetPrivate" })
 }
 
-locals {
-  rtb_by_role = {
-    app = aws_route_table.private_app[0].id
-    api = aws_route_table.private_api[0].id
-    db  = aws_route_table.private_db[0].id
-  }
-}
+locals { rtb_by_role = { app = aws_route_table.private_app[0].id, api = aws_route_table.private_api[0].id, db = aws_route_table.private_db[0].id } }
 
 resource "aws_route_table_association" "private_assoc" {
   for_each       = local.private_def
@@ -217,4 +165,4 @@ resource "aws_route_table_association" "private_assoc" {
   route_table_id = local.rtb_by_role[each.value.role]
 }
 
-# Keep your NACL + Flow Logs blocks as you had them
+# (Keep your existing NACL + Flow Logs blocks if you already have them.)
