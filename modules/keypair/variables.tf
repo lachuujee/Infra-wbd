@@ -1,13 +1,16 @@
 variable "customer" {
   type = string
+  default = null
 }
 
 variable "environment" {
   type = string
+  default = null
 }
 
 variable "region" {
   type = string
+  default = null
 }
 
 # Optional: if present in inputs.json, use for naming (<sandbox_name>-keypair)
@@ -55,8 +58,8 @@ locals {
   common_tags = merge(
     {
       Name        = local.key_name
-      Customer    = var.customer
-      Environment = var.environment
+      Customer    = coalesce(var.customer, "")
+      Environment = coalesce(var.environment, "")
     },
     var.tags_extra
   )
