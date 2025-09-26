@@ -8,6 +8,7 @@ terraform {
     }
   }
 
+  # State for this VPC stack
   backend "s3" {
     bucket  = "wbd-tf-state-sandbox"
     key     = "wbd/sandbox/vpc/terraform.tfstate"
@@ -16,7 +17,9 @@ terraform {
   }
 }
 
+# Region logic:
+# - If Terragrunt passes var.region (from inputs.json.aws_region), use it
+# - Else default to us-east-1
 provider "aws" {
-  # Align with other modules: take region from module input
-  region = var.region
+  region = coalesce(var.region, "us-east-1")
 }
