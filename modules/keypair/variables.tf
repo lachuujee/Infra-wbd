@@ -1,3 +1,9 @@
+# Align with provider.tf: declare region
+variable "region" {
+  type        = string
+  description = "AWS region for this module's provider"
+}
+
 variable "sandbox_name" {
   type = string
 }
@@ -37,11 +43,11 @@ variable "tags_extra" {
 locals {
   # Final KeyPair (and Secret) name: "<sandbox_name>-keypair" unless overridden
   name_base = trimspace(var.sandbox_name)
-  key_name  = coalesce(var.key_name_override, "${local.name_base}-keypair")
+  key_name  = coalesce(var.key_name_override, "${name_base}-keypair")
 
   common_tags = merge(
     {
-      Name = local.key_name
+      Name = key_name
     },
     var.tags_extra
   )
