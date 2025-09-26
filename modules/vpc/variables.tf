@@ -1,4 +1,3 @@
-# Align with provider.tf: declare region expected by provider
 variable "region" {
   type        = string
   description = "AWS region for this module's provider"
@@ -9,7 +8,7 @@ variable "enabled" {
   default = true
 }
 
-# Used for naming, e.g. SBX_INTAKE_ID_001
+# Used for naming (e.g., sbx_intake_id_001)
 variable "sandbox_name" {
   type = string
 }
@@ -20,25 +19,24 @@ variable "name_prefix_override" {
   default = null
 }
 
-# --- Addressing options ---
-# A) Default to your IPAM pool (fallback when no CIDR is provided)
-variable "ipam_pool_id" {
+# --- Addressing ---
+# Default to classic CIDR so we don't depend on IPAM by default.
+variable "cidr_block" {
   type    = string
-  default = "ipam-pool-03f8473dfbe9f6504"
+  default = "10.0.0.0/16"
 }
 
+# If you later want IPAM, set cidr_block=null and provide these:
+variable "ipam_pool_id" {
+  type    = string
+  default = null
+}
 variable "vpc_netmask_length" {
   type    = number
   default = 16
 }
 
-# B) Classic CIDR (if this is set, module ignores IPAM fields)
-variable "cidr_block" {
-  type    = string
-  default = null
-}
-
-# Availability Zones (e.g. ["us-east-1a","us-east-1b"]); if null, module auto-picks 2
+# Optional AZs (e.g., ["us-east-1a","us-east-1b"]); if null, module auto-picks 2
 variable "azs" {
   type    = list(string)
   default = null
@@ -56,12 +54,13 @@ variable "tags_extra" {
   default = {}
 }
 
+# ---------- Common locals for naming/tags ----------
 locals {
   name_prefix = coalesce(var.name_prefix_override, trimspace(var.sandbox_name))
 
   common_tags = merge(
     {
-      Name    = "${name_prefix}-vpc"
+      Name    = "${local.name_prefix}-vpc"
       Service = "VPC"
     },
     var.tags_extra
