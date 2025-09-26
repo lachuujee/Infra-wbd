@@ -19,7 +19,7 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # Pull AWS creds from the single JSON secret: INFRA_WBD_SECRET
+      # 1) Load creds from single JSON secret and export to job env
       - name: Export AWS credentials from INFRA_WBD_SECRET
         shell: bash
         run: |
@@ -27,10 +27,39 @@ jobs:
           if ! command -v jq >/dev/null 2>&1; then
             sudo apt-get update -y && sudo apt-get install -y jq
           fi
-          creds='${{ secrets.INFRA_WBD_SECRET }}'
-          echo "AWS_ACCESS_KEY_ID=$(jq -r '.AWS_ACCESS_KEY_ID' <<< \"$creds\")" >> "$GITHUB_ENV"
-          echo "AWS_SECRET_ACCESS_KEY=$(jq -r '.AWS_SECRET_ACCESS_KEY' <<< \"$creds\")" >> "$GITHUB_ENV"
 
+          # Read the secret JSON
+          creds='${{ secrets.INFRA_WBD_SECRET }}'
+
+          # Extract values
+          AKID=$(jq -r '.AWS_ACCESS_KEY_ID // empty' <<< "$creds")
+          SAK=$(jq -r '.AWS_SECRET_ACCESS_KEY // empty' <<< "$creds")
+
+          # Validate (fail early if missing)
+          if [[ -z "$AKID" || -z "$SAK" ]]; then
+            echo "::error title=Missing keys in INFRA_WBD_SECRET::Expected JSON with AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY"
+            exit 1
+          fi
+
+          # Export for all subsequent steps
+          {
+            echo "AWS_ACCESS_KEY_ID=$AKID"
+            echo "AWS_SECRET_ACCESS_KEY=$SAK"
+          } >> "$GITHUB_ENV"
+
+          # Non-sensitive confirmation (lengths only)
+          echo "Loaded AWS_ACCESS_KEY_ID (len=${#AKID}), AWS_SECRET_ACCESS_KEY (len=${#SAK})"
+
+      # 2) Quick sanity check that env vars are visible to this step
+      - name: Verify AWS env presence
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "${AWS_ACCESS_KEY_ID:-}" ]] || { echo "::error ::AWS_ACCESS_KEY_ID not set"; exit 1; }
+          [[ -n "${AWS_SECRET_ACCESS_KEY:-}" ]] || { echo "::error ::AWS_SECRET_ACCESS_KEY not set"; exit 1; }
+          echo "AWS env variables are present."
+
+      # 3) Now AWS CLI should be able to read credentials from env
       - name: Show caller identity (should be DESTINATION account)
         run: aws sts get-caller-identity
 
