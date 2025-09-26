@@ -1,3 +1,9 @@
+# align with provider.tf: declare region
+variable "region" {
+  type        = string
+  description = "AWS region for this module's provider"
+}
+
 variable "enabled" {
   type    = bool
   default = true
@@ -8,7 +14,7 @@ variable "name" {
   default = "ec2"
 }
 
-# If provided via inputs.json, we'll try to use it; else we fall back to AL2 via SSM
+# If provided via inputs.json, we'll try to use it; else we fall back to AL2 via SSM in main.tf
 variable "ami_id" {
   type    = string
   default = null
