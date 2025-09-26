@@ -1,54 +1,70 @@
 ############################################
-# AZs (null-safe)
+# Availability Zones (safe & simple)
 ############################################
 data "aws_availability_zones" "available" {
   state = "available"
 }
 
 locals {
-  azs_input     = coalesce(var.azs, [])
-  azs_default   = slice(data.aws_availability_zones.available.names, 0, 2)
-  azs_effective = (length(local.azs_input) >= 2) ? local.azs_input : local.azs_default
+  # Use provided AZs if ≥ 2; else take first two from provider's region
+  azs_len       = length(var.azs != null ? var.azs : [])
+  azs_effective = (local.azs_len >= 2) ? var.azs : slice(data.aws_availability_zones.available.names, 0, 2)
   az0           = local.azs_effective[0]
   az1           = local.azs_effective[1]
-}
 
-############################################
-# Addressing choice: CIDR by default; IPAM only if cidr_block is null/empty
-############################################
-locals {
-  cidr_trim  = (var.cidr_block != null) ? trimspace(var.cidr_block) : ""
+  ############################################
+  # Addressing choice (CIDR by default; IPAM only when pool id is set)
+  ############################################
+  cidr_trim   = trimspace(coalesce(var.cidr_block, ""))
   cidr_is_set = (local.cidr_trim != "")
-  use_ipam    = !local.cidr_is_set
+
+  # IPAM is enabled only if pool id is non-empty and netmask is provided
+  ipam_pool_id_trim = trimspace(coalesce(var.ipam_pool_id, ""))
+  use_ipam          = (local.ipam_pool_id_trim != "") && (var.vpc_netmask_length != null)
+
+  # Naming / tags
+  name_prefix = coalesce(var.name_prefix_override, trimspace(var.sandbox_name))
+  common_tags = merge(
+    { Name = "${local.name_prefix}-vpc", Service = "VPC" },
+    var.tags_extra
+  )
 }
 
+############################################
+# VPC
+############################################
 resource "aws_vpc" "this" {
   count = var.enabled ? 1 : 0
 
-  # Mutually exclusive
+  # Mutually exclusive based on locals above
   ipv4_ipam_pool_id   = local.use_ipam ? var.ipam_pool_id       : null
   ipv4_netmask_length = local.use_ipam ? var.vpc_netmask_length : null
-  cidr_block          = local.use_ipam ? null                   : var.cidr_block
+  cidr_block          = local.use_ipam ? null                    : local.cidr_trim
 
   enable_dns_support   = true
   enable_dns_hostnames = true
-  tags                 = local.common_tags
+
+  tags = local.common_tags
 
   lifecycle {
     precondition {
-      condition     = local.use_ipam ? (var.ipam_pool_id != null && trimspace(var.ipam_pool_id) != "") : local.cidr_is_set
-      error_message = "Provide either non-empty cidr_block OR (ipam_pool_id + vpc_netmask_length) when using IPAM."
+      # Valid if either: (a) IPAM truly configured OR (b) a non-empty CIDR is present
+      condition     = local.use_ipam || local.cidr_is_set
+      error_message = "Provide non-empty cidr_block OR specify ipam_pool_id and vpc_netmask_length."
     }
   }
 }
 
+# Convenience locals after VPC exists
 locals {
-  vpc_id   = var.enabled ? aws_vpc.this[0].id : null
+  vpc_id   = var.enabled ? aws_vpc.this[0].id         : null
   vpc_cidr = var.enabled ? aws_vpc.this[0].cidr_block : null
 }
 
 ############################################
 # CIDR planning
+# - 6 private /23 subnets (≈512 IPs each)
+# - 2 public /28 subnets (≈16 IPs each)
 ############################################
 locals {
   private_cidrs = var.enabled ? [
@@ -82,10 +98,7 @@ locals {
 resource "aws_internet_gateway" "igw" {
   count  = var.enabled ? 1 : 0
   vpc_id = local.vpc_id
-  tags   = merge(local.common_tags, {
-    Name    = "${local.name_prefix}-igw"
-    Service = "InternetGateway"
-  })
+  tags   = merge(local.common_tags, { Name = "${local.name_prefix}-igw", Service = "InternetGateway" })
 }
 
 ############################################
@@ -114,20 +127,14 @@ resource "aws_subnet" "public" {
 resource "aws_eip" "nat" {
   count  = var.enabled ? 1 : 0
   domain = "vpc"
-  tags   = merge(local.common_tags, {
-    Name    = "${local.name_prefix}-nat-eip"
-    Service = "NATGateway"
-  })
+  tags   = merge(local.common_tags, { Name = "${local.name_prefix}-nat-eip", Service = "NATGateway" })
 }
 
 resource "aws_nat_gateway" "nat" {
   count         = var.enabled ? 1 : 0
   allocation_id = aws_eip.nat[0].id
   subnet_id     = aws_subnet.public["a"].id
-  tags          = merge(local.common_tags, {
-    Name    = "${local.name_prefix}-nat"
-    Service = "NATGateway"
-  })
+  tags          = merge(local.common_tags, { Name = "${local.name_prefix}-nat", Service = "NATGateway" })
 }
 
 ############################################
@@ -150,7 +157,7 @@ resource "aws_route" "public_default" {
 }
 
 resource "aws_route_table_association" "public_assoc" {
-  for_each       = aws_subnet.public
+  for_each      = aws_subnet.public
   subnet_id      = each.value.id
   route_table_id = aws_route_table.public[0].id
 }
@@ -213,20 +220,19 @@ resource "aws_subnet" "private" {
   cidr_block        = each.value.cidr
   availability_zone = each.value.az
 
-  # Use the full key (app-a, api-b, etc.) to avoid fragile substr()
   tags = merge(local.common_tags, {
-    Name    = "${local.name_prefix}-private-${each.key}"
+    Name    = "${local.name_prefix}-private-${each.value.role}-${substr(each.key, -1, 1)}"
     Role    = upper(each.value.role)
     Service = "SubnetPrivate"
   })
 }
 
 locals {
-  rtb_by_role = {
+  rtb_by_role = var.enabled ? {
     app = aws_route_table.private_app[0].id
     api = aws_route_table.private_api[0].id
     db  = aws_route_table.private_db[0].id
-  }
+  } : {}
 }
 
 resource "aws_route_table_association" "private_assoc" {
@@ -236,7 +242,7 @@ resource "aws_route_table_association" "private_assoc" {
 }
 
 ############################################
-# (Optional) NACL and Flow Logs – unchanged logic, formatted
+# NACL: inbound 443 only, outbound all
 ############################################
 resource "aws_network_acl" "vpc_acl" {
   count  = var.enabled ? 1 : 0
@@ -280,6 +286,9 @@ resource "aws_network_acl_association" "assoc_private" {
   subnet_id      = each.value.id
 }
 
+############################################
+# Flow Logs: role, policy, log group, flow log
+############################################
 data "aws_iam_policy_document" "flowlogs_trust" {
   statement {
     effect  = "Allow"
@@ -327,11 +336,11 @@ resource "aws_cloudwatch_log_group" "flowlogs" {
 }
 
 resource "aws_flow_log" "vpc" {
-  count                = var.enabled ? 1 : 0
-  vpc_id               = local.vpc_id
-  log_destination_type = "cloud-watch-logs"
-  log_group_name       = aws_cloudwatch_log_group.flowlogs[0].name
-  iam_role_arn         = aws_iam_role.flowlogs_role[0].arn
-  traffic_type         = "ALL"
-  tags                 = merge(local.common_tags, { Service = "FlowLogs" })
+  count                 = var.enabled ? 1 : 0
+  vpc_id                = local.vpc_id
+  log_destination_type  = "cloud-watch-logs"
+  log_group_name        = aws_cloudwatch_log_group.flowlogs[0].name
+  iam_role_arn          = aws_iam_role.flowlogs_role[0].arn
+  traffic_type          = "ALL"
+  tags                  = merge(local.common_tags, { Service = "FlowLogs" })
 }
