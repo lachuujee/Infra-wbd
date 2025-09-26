@@ -6,26 +6,32 @@ data "aws_availability_zones" "available" {
 }
 
 locals {
-  # Keep the whole ternary on ONE line to avoid HCL parse errors
-  azs_effective = (var.azs != null && length(var.azs) >= 2) ? var.azs : slice(data.aws_availability_zones.available.names, 0, 2)
-  az0           = local.azs_effective[0]
-  az1           = local.azs_effective[1]
+  # null-safe: if var.azs is null use [], length([]) = 0
+  azs_effective = length(coalesce(var.azs, [])) >= 2
+    ? coalesce(var.azs, [])
+    : slice(data.aws_availability_zones.available.names, 0, 2)
+  az0 = local.azs_effective[0]
+  az1 = local.azs_effective[1]
 }
 
 ############################################
-# Addressing mode: CIDR by default; IPAM when cidr_block = null
+# Addressing: default to CIDR unless IPAM is explicitly provided
 ############################################
 locals {
-  use_ipam = var.cidr_block == null
+  # If cidr_block is null, fall back to 10.0.0.0/16 (safe default)
+  cidr_effective = coalesce(var.cidr_block, "10.0.0.0/16")
+
+  # Only use IPAM when you explicitly pass ipam_pool_id and you intentionally set cidr_block = null
+  use_ipam = (var.cidr_block == null && var.ipam_pool_id != null)
 }
 
 resource "aws_vpc" "this" {
   count = var.enabled ? 1 : 0
 
-  # CIDR (default) vs IPAM (only when cidr_block = null)
+  # CIDR (default) vs IPAM (only when both conditions are met)
   ipv4_ipam_pool_id   = local.use_ipam ? var.ipam_pool_id       : null
   ipv4_netmask_length = local.use_ipam ? var.vpc_netmask_length : null
-  cidr_block          = local.use_ipam ? null                   : var.cidr_block
+  cidr_block          = local.use_ipam ? null                   : local.cidr_effective
 
   enable_dns_support   = true
   enable_dns_hostnames = true
@@ -34,7 +40,7 @@ resource "aws_vpc" "this" {
 
   lifecycle {
     precondition {
-      condition     = local.use_ipam ? (var.ipam_pool_id != null && var.vpc_netmask_length != null) : (var.cidr_block != null)
+      condition     = local.use_ipam ? (var.ipam_pool_id != null) : (local.cidr_effective != null)
       error_message = "Provide either (cidr_block) OR (ipam_pool_id + vpc_netmask_length)."
     }
   }
@@ -51,9 +57,21 @@ locals {
 # - 2 public  /28 subnets (≈16 IPs)
 ############################################
 locals {
-  private_cidrs  = var.enabled ? [cidrsubnet(local.vpc_cidr, 3, 0), cidrsubnet(local.vpc_cidr, 3, 1), cidrsubnet(local.vpc_cidr, 3, 2), cidrsubnet(local.vpc_cidr, 3, 3), cidrsubnet(local.vpc_cidr, 3, 4), cidrsubnet(local.vpc_cidr, 3, 5)] : []
+  private_cidrs  = var.enabled ? [
+    cidrsubnet(local.vpc_cidr, 3, 0),
+    cidrsubnet(local.vpc_cidr, 3, 1),
+    cidrsubnet(local.vpc_cidr, 3, 2),
+    cidrsubnet(local.vpc_cidr, 3, 3),
+    cidrsubnet(local.vpc_cidr, 3, 4),
+    cidrsubnet(local.vpc_cidr, 3, 5)
+  ] : []
+
   public_parent  = var.enabled ? cidrsubnet(local.vpc_cidr, 4, 15) : null
-  public_cidrs   = var.enabled ? [cidrsubnet(local.public_parent, 4, 0), cidrsubnet(local.public_parent, 4, 1)] : []
+  public_cidrs   = var.enabled ? [
+    cidrsubnet(local.public_parent, 4, 0),
+    cidrsubnet(local.public_parent, 4, 1)
+  ] : []
+
   private_def    = var.enabled ? {
     "app-a" = { cidr = local.private_cidrs[0], az = local.az0, role = "app" }
     "app-b" = { cidr = local.private_cidrs[1], az = local.az1, role = "app" }
@@ -184,7 +202,6 @@ resource "aws_subnet" "private" {
   availability_zone = each.value.az
 
   tags = merge(local.common_tags, {
-    # get 'a' / 'b' suffix safely without substr negatives
     Name    = "${local.name_prefix}-private-${each.value.role}-${split(each.key, "-")[1]}"
     Role    = upper(each.value.role)
     Service = "SubnetPrivate"
