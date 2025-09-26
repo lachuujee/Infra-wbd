@@ -1,3 +1,8 @@
+variable "region" {
+  type        = string
+  description = "AWS region for this module's provider"
+}
+
 variable "enabled" {
   type    = bool
   default = true
