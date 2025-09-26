@@ -1,4 +1,11 @@
 ############################################
+# Provider (module-scoped)
+############################################
+provider "aws" {
+  region = var.region
+}
+
+############################################
 # Helper: AZs
 ############################################
 data "aws_availability_zones" "available" {
@@ -6,15 +13,17 @@ data "aws_availability_zones" "available" {
 }
 
 locals {
-  azs_effective = var.azs != null && length(var.azs) >= 2
+  # If var.azs is provided (non-null & >=2), use it; else pick first two AZs
+  azs_effective = (var.azs != null && length(var.azs) >= 2)
     ? var.azs
     : slice(data.aws_availability_zones.available.names, 0, 2)
+
   az0 = local.azs_effective[0]
   az1 = local.azs_effective[1]
 }
 
 ############################################
-# Choose addressing mode: IPAM (default) or CIDR
+# Choose addressing mode: IPAM (when cidr_block=null) or CIDR (default)
 ############################################
 locals {
   use_ipam = var.cidr_block == null
@@ -24,7 +33,7 @@ resource "aws_vpc" "this" {
   count = var.enabled ? 1 : 0
 
   # Mutually exclusive: set only the branch we use
-  ipv4_ipam_pool_id   = local.use_ipam ? var.ipam_pool_id      : null
+  ipv4_ipam_pool_id   = local.use_ipam ? var.ipam_pool_id       : null
   ipv4_netmask_length = local.use_ipam ? var.vpc_netmask_length : null
   cidr_block          = local.use_ipam ? null                   : var.cidr_block
 
@@ -33,7 +42,6 @@ resource "aws_vpc" "this" {
 
   tags = local.common_tags
 
-  # Guardrails
   lifecycle {
     precondition {
       condition     = local.use_ipam ? (var.ipam_pool_id != null && var.vpc_netmask_length != null) : (var.cidr_block != null)
@@ -43,14 +51,14 @@ resource "aws_vpc" "this" {
 }
 
 locals {
-  vpc_id   = var.enabled ? aws_vpc.this[0].id : null
-  vpc_cidr = var.enabled ? aws_vpc.this[0].cidr_block : null
+  vpc_id   = var.enabled ? aws_vpc.this[0].id          : null
+  vpc_cidr = var.enabled ? aws_vpc.this[0].cidr_block  : null
 }
 
 ############################################
 # CIDR planning
 # - 6 private /23 subnets (≈512 IPs)
-# - 2 public /28 subnets (≈16 IPs)
+# - 2 public  /28 subnets (≈16 IPs)
 ############################################
 locals {
   private_cidrs = var.enabled ? [
@@ -127,7 +135,7 @@ resource "aws_nat_gateway" "nat" {
 # Route tables
 ############################################
 resource "aws_route_table" "public" {
-  count = var.enabled ? 1 : 0
+  count  = var.enabled ? 1 : 0
   vpc_id = local.vpc_id
   tags = merge(local.common_tags, {
     Name    = "${local.name_prefix}-rtb-public"
@@ -144,26 +152,26 @@ resource "aws_route" "public_default" {
 
 resource "aws_route_table_association" "public_assoc" {
   for_each      = aws_subnet.public
-  subnet_id      = each.value.id
+  subnet_id     = each.value.id
   route_table_id = aws_route_table.public[0].id
 }
 
 resource "aws_route_table" "private_app" {
-  count = var.enabled ? 1 : 0
+  count  = var.enabled ? 1 : 0
   vpc_id = local.vpc_id
-  tags = merge(local.common_tags, { Name = "${local.name_prefix}-rtb-private-app", Service = "RouteTablePrivate" })
+  tags   = merge(local.common_tags, { Name = "${local.name_prefix}-rtb-private-app", Service = "RouteTablePrivate" })
 }
 
 resource "aws_route_table" "private_api" {
-  count = var.enabled ? 1 : 0
+  count  = var.enabled ? 1 : 0
   vpc_id = local.vpc_id
-  tags = merge(local.common_tags, { Name = "${local.name_prefix}-rtb-private-api", Service = "RouteTablePrivate" })
+  tags   = merge(local.common_tags, { Name = "${local.name_prefix}-rtb-private-api", Service = "RouteTablePrivate" })
 }
 
 resource "aws_route_table" "private_db" {
-  count = var.enabled ? 1 : 0
+  count  = var.enabled ? 1 : 0
   vpc_id = local.vpc_id
-  tags = merge(local.common_tags, { Name = "${local.name_prefix}-rtb-private-db", Service = "RouteTablePrivate" })
+  tags   = merge(local.common_tags, { Name = "${local.name_prefix}-rtb-private-db", Service = "RouteTablePrivate" })
 }
 
 resource "aws_route" "private_app_default" {
