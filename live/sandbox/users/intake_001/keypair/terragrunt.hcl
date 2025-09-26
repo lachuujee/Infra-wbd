@@ -1,4 +1,4 @@
-dependencies { paths = ["../vpc"] }  # order only (no outputs needed for a plain keypair)
+dependencies { paths = ["../vpc"] }
 
 terraform { source = "../../../../../modules/keypair" }
 
@@ -7,9 +7,12 @@ locals {
 }
 
 inputs = {
-  enabled   = try(local.cfg.modules.keypair.enabled, true)
-  key_name  = local.cfg.modules.keypair.name
-  # public_key = try(local.cfg.modules.keypair.public_key, null)  # optional import
-  tags      = try(local.cfg.common_tags, {})
-}
+  enabled       = try(local.cfg.modules.keypair.enabled,
+                  try(local.cfg.modules.ec2.enabled, false))
 
+  sandbox_name  = local.cfg.sandbox_name
+  customer      = try(local.cfg.customer, null)
+  environment   = local.cfg.environment
+  region        = try(local.cfg.region, null)
+  tags_extra    = try(local.cfg.common_tags, {})
+}
