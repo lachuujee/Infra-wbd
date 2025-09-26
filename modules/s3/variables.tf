@@ -1,4 +1,5 @@
-# Align with IAM: declare region expected by provider
+# modules/s3/variables.tf
+
 variable "region" {
   type        = string
   description = "AWS region for this module's provider"
@@ -9,7 +10,7 @@ variable "enabled" {
   default = true
 }
 
-# Display name coming from inputs.json: modules.s3.name
+# Display name coming from inputs.json: modules.s3.name (e.g., "SBX_INTAKE_ID_001-s3")
 variable "name" {
   type    = string
   default = "s3"
@@ -42,7 +43,7 @@ variable "kms_key_id" {
   default = null   # null → SSE-S3 (AES256); else AWS KMS
 }
 
-# Optional hard override for the actual bucket name (must be unique & DNS-compliant)
+# Optional hard override for the actual bucket name (must be globally unique, DNS-compliant)
 variable "bucket_name_override" {
   type    = string
   default = null
@@ -56,17 +57,17 @@ variable "tags_extra" {
 
 locals {
   # S3 bucket DNS rules: lowercase, no underscores
-  name_clean    = lower(replace(var.name, "_", "-"))
-  req_clean     = lower(replace(var.request_id, "_", "-"))
+  name_clean = lower(replace(var.name, "_", "-"))
+  req_clean  = lower(replace(var.request_id, "_", "-"))
 
   # Default bucket name pattern: "<name>-<request_id>"
-  bucket_name_default = "${name_clean}-${req_clean}"
+  bucket_name_default = "${local.name_clean}-${local.req_clean}"
 
-  bucket_name = coalesce(var.bucket_name_override, bucket_name_default)
+  bucket_name = coalesce(var.bucket_name_override, local.bucket_name_default)
 
   common_tags = merge(
     {
-      Name    = bucket_name
+      Name    = local.bucket_name
       Service = "S3"
     },
     var.tags_extra
