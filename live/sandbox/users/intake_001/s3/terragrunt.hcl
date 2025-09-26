@@ -1,35 +1,30 @@
+# live/sandbox/users/intake_001/iam/terragrunt.hcl
 terraform {
-  source = "../../../../../modules/s3"
+  source = "../../../../../modules/iam"
 }
 
 locals {
-  cfg = read_tfvars_file(find_in_parent_folders("inputs.json"))
-
-  # sanitise just like we did elsewhere (used by the module anyway)
-  name_clean = regexreplace(lower(try(local.cfg.modules.s3.name, "s3")), "[^a-z0-9-]", "-")
+  cfg       = read_tfvars_file(find_in_parent_folders("inputs.json"))
+  raw_name  = try(local.cfg.sandbox_name, "sandbox")
+  # sanitize without regex: lower + replace spaces/underscores with hyphen
+  name_base = lower(replace(replace(trimspace(raw_name), " ", "-"), "_", "-"))
+  role_base = "${name_base}-iam"
 }
 
 inputs = {
   region               = try(local.cfg.aws_region, "us-east-1")
-
-  # force it (no "unknown" fallback) so bad names don't slip through
-  request_id           = local.cfg.request_id
-
-  enabled              = try(local.cfg.modules.s3.enabled, true)
-  name                 = local.name_clean
-  versioning           = try(local.cfg.modules.s3.versioning, true)
-  block_public         = try(local.cfg.modules.s3.block_public, true)
-  force_destroy        = try(local.cfg.modules.s3.force_destroy, false)
-  kms_key_id           = try(local.cfg.modules.s3.kms_key_id, null)
-  bucket_name_override = try(local.cfg.modules.s3.bucket_name_override, null)
-
+  name                 = local.role_base
+  role_name            = local.role_base
+  assume_services      = try(local.cfg.modules.iam.assume_services, ["ec2.amazonaws.com"])
+  managed_policy_arns  = try(local.cfg.modules.iam.managed_policy_arns, ["arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"])
+  path                 = try(local.cfg.modules.iam.path, "/")
   tags_extra = merge(
     try(local.cfg.common_tags, {}),
     {
       RequestID   = try(local.cfg.request_id,   "unknown")
       Requester   = try(local.cfg.requester,    "unknown")
       Environment = try(local.cfg.environment,  "sandbox")
-      Service     = "S3"
+      Service     = "IAM"
     }
   )
 }
