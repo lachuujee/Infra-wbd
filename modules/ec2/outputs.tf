@@ -16,6 +16,7 @@ output "private_ips" {
 output "effective_ami" {
   description = "AMI actually used for launch"
   value       = local.effective_ami
+  sensitive   = true  # <-- REQUIRED to satisfy Terraform's sensitive-output rule
 }
 
 output "key_name_used" {
