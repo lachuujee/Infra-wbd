@@ -8,7 +8,6 @@ terraform {
     }
   }
 
-  # State for this VPC stack
   backend "s3" {
     bucket  = "wbd-tf-state-sandbox"
     key     = "wbd/sandbox/vpc/terraform.tfstate"
@@ -17,7 +16,7 @@ terraform {
   }
 }
 
-# Region comes from var.region; fallback to us-east-1 if empty/null
 provider "aws" {
-  region = (trimspace(coalesce(var.region, "")) != "") ? var.region : "us-east-1"
+  # default region if not provided
+  region = var.region != null ? var.region : "us-east-1"
 }
