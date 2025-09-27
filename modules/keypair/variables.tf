@@ -1,25 +1,27 @@
-# Align with provider.tf: declare region
+# Region passed from Terragrunt
 variable "region" {
   type        = string
-  description = "AWS region for this module's provider"
+  description = "AWS region for this module"
 }
 
-variable "sandbox_name" {
-  type = string
-}
-
+# Enable/disable creation
 variable "enabled" {
   type    = bool
   default = false
 }
 
-# Optional override; if set, it wins over "<sandbox_name>-keypair"
+# Source for final key name "<sandbox_name>-keypair"
+variable "sandbox_name" {
+  type = string
+}
+
+# Optional explicit override for the key name
 variable "key_name_override" {
   type    = string
   default = null
 }
 
-# Crypto
+# Crypto settings
 variable "algorithm" {
   type    = string
   default = "RSA" # or "ED25519"
@@ -34,21 +36,19 @@ variable "rsa_bits" {
   default = 4096
 }
 
-# Extra tags merged into all resources (e.g., RequestID, Requester, Environment)
+# Extra tags applied to all resources
 variable "tags_extra" {
   type    = map(string)
   default = {}
 }
 
 locals {
-  # Final KeyPair (and Secret) name: "<sandbox_name>-keypair" unless overridden
-  name_base = trimspace(var.sandbox_name)
-  key_name  = coalesce(var.key_name_override, "${name_base}-keypair")
+  # Final names
+  name_base = var.sandbox_name
+  key_name  = coalesce(var.key_name_override, "${local.name_base}-keypair")
 
   common_tags = merge(
-    {
-      Name = key_name
-    },
+    { Name = local.key_name },
     var.tags_extra
   )
 }
