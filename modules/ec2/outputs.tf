@@ -1,19 +1,14 @@
-output "instance_id" {
-  value       = var.enabled ? aws_instance.this[0].id : null
-  description = "EC2 instance ID"
+output "instance_ids" {
+  description = "EC2 instance IDs"
+  value       = [for i in aws_instance.this : i.id]
 }
 
-output "private_ip" {
-  value       = var.enabled ? aws_instance.this[0].private_ip : null
-  description = "Private IP"
+output "instance_private_ips" {
+  description = "Private IPs of instances"
+  value       = [for i in aws_instance.this : i.private_ip]
 }
 
-output "public_ip" {
-  value       = var.enabled ? aws_instance.this[0].public_ip : null
-  description = "Public IP"
-}
-
-output "ami_id_used" {
-  value       = var.enabled ? aws_instance.this[0].ami : null
-  description = "AMI actually used"
+output "security_group_id" {
+  description = "Security group protecting these instances"
+  value       = var.enabled ? aws_security_group.app[0].id : null
 }
