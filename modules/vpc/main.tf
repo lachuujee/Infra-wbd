@@ -1,67 +1,40 @@
 ############################################
-# Availability Zones (safe defaults)
+# Availability Zones (fallback to first 2)
 ############################################
 data "aws_availability_zones" "available" {
   state = "available"
 }
 
-############################################
-# Locals: simple, defensive logic
-############################################
 locals {
-  # ----- AZ selection: use provided azs if at least 2, else first two in region
-  azs_input     = var.azs != null ? var.azs : []
-  azs_effective = length(local.azs_input) >= 2 ? local.azs_input : slice(data.aws_availability_zones.available.names, 0, 2)
-  az0           = local.azs_effective[0]
-  az1           = local.azs_effective[1]
-
-  # ----- Addressing preference: IPAM > explicit CIDR > default CIDR
-  ipam_pool_id_trim = var.ipam_pool_id != null ? trimspace(var.ipam_pool_id) : ""
-  ipam_pool_id_set  = local.ipam_pool_id_trim != ""
-
-  cidr_trim = var.cidr_block != null ? trimspace(var.cidr_block) : ""
-  cidr_set  = local.cidr_trim != ""
-
-  # If IPAM pool id is present, use IPAM; otherwise pick CIDR (explicit or default)
-  chosen_use_ipam    = local.ipam_pool_id_set
-  chosen_cidr        = local.chosen_use_ipam ? null : (local.cidr_set ? local.cidr_trim : "10.0.0.0/16")
-  chosen_ipam_pool   = local.chosen_use_ipam ? var.ipam_pool_id : null
-  chosen_netmask_len = local.chosen_use_ipam ? (var.vpc_netmask_length != null ? var.vpc_netmask_length : 16) : null
-
-  # Naming and tags
-  name_prefix = (var.name_prefix_override != null && trimspace(var.name_prefix_override) != "")
-    ? trimspace(var.name_prefix_override)
-    : trimspace(var.sandbox_name)
-
-  common_tags = merge(
-    {
-      Name    = "${local.name_prefix}-vpc"
-      Service = "VPC"
-    },
-    var.tags_extra
-  )
+  # If azs provided, assume at least two; else take first two from region
+  az0 = var.azs != null ? var.azs[0] : data.aws_availability_zones.available.names[0]
+  az1 = var.azs != null ? var.azs[1] : data.aws_availability_zones.available.names[1]
 }
 
 ############################################
-# VPC (chooses IPAM or CIDR automatically)
+# Addressing choice: IPAM > CIDR > default
+############################################
+locals {
+  use_ipam    = var.ipam_pool_id != null
+  cidr_final  = var.cidr_block != null ? var.cidr_block : "10.0.0.0/16"
+  netmask_len = var.vpc_netmask_length != null ? var.vpc_netmask_length : 16
+}
+
+############################################
+# VPC: IPAM if provided; else CIDR/default
 ############################################
 resource "aws_vpc" "this" {
-  count = var.enabled ? 1 : 0
-
-  ipv4_ipam_pool_id   = local.chosen_use_ipam ? local.chosen_ipam_pool   : null
-  ipv4_netmask_length = local.chosen_use_ipam ? local.chosen_netmask_len : null
-  cidr_block          = local.chosen_use_ipam ? null : local.chosen_cidr
+  ipv4_ipam_pool_id   = local.use_ipam ? var.ipam_pool_id : null
+  ipv4_netmask_length = local.use_ipam ? local.netmask_len : null
+  cidr_block          = local.use_ipam ? null : local.cidr_final
 
   enable_dns_support   = true
   enable_dns_hostnames = true
 
-  tags = local.common_tags
-}
-
-# Convenience locals that depend on the VPC
-locals {
-  vpc_id   = var.enabled ? aws_vpc.this[0].id : null
-  vpc_cidr = var.enabled ? (local.chosen_use_ipam ? aws_vpc.this[0].cidr_block : local.chosen_cidr) : null
+  tags = merge(local.common_tags, {
+    Name    = "${local.name_prefix}-vpc"
+    Service = "VPC"
+  })
 }
 
 ############################################
@@ -70,50 +43,52 @@ locals {
 # - 2 public /28 subnets (≈16 IPs)
 ############################################
 locals {
-  private_cidrs = var.enabled ? [
-    cidrsubnet(local.vpc_cidr, 3, 0),
-    cidrsubnet(local.vpc_cidr, 3, 1),
-    cidrsubnet(local.vpc_cidr, 3, 2),
-    cidrsubnet(local.vpc_cidr, 3, 3),
-    cidrsubnet(local.vpc_cidr, 3, 4),
-    cidrsubnet(local.vpc_cidr, 3, 5)
-  ] : []
+  private_cidrs = [
+    cidrsubnet(aws_vpc.this.cidr_block, 3, 0),
+    cidrsubnet(aws_vpc.this.cidr_block, 3, 1),
+    cidrsubnet(aws_vpc.this.cidr_block, 3, 2),
+    cidrsubnet(aws_vpc.this.cidr_block, 3, 3),
+    cidrsubnet(aws_vpc.this.cidr_block, 3, 4),
+    cidrsubnet(aws_vpc.this.cidr_block, 3, 5)
+  ]
 
-  public_parent = var.enabled ? cidrsubnet(local.vpc_cidr, 4, 15) : null
-  public_cidrs  = var.enabled ? [
-    cidrsubnet(local.public_parent, 4, 0),
-    cidrsubnet(local.public_parent, 4, 1)
-  ] : []
+  public_parent = cidrsubnet(aws_vpc.this.cidr_block, 4, 15) # a /24 at the end
+  public_cidrs  = [
+    cidrsubnet(local.public_parent, 4, 0), # /28
+    cidrsubnet(local.public_parent, 4, 1)  # /28
+  ]
 
-  private_def = var.enabled ? {
+  private_def = {
     "app-a" = { cidr = local.private_cidrs[0], az = local.az0, role = "app" }
     "app-b" = { cidr = local.private_cidrs[1], az = local.az1, role = "app" }
     "api-a" = { cidr = local.private_cidrs[2], az = local.az0, role = "api" }
     "api-b" = { cidr = local.private_cidrs[3], az = local.az1, role = "api" }
     "db-a"  = { cidr = local.private_cidrs[4], az = local.az0, role = "db"  }
     "db-b"  = { cidr = local.private_cidrs[5], az = local.az1, role = "db"  }
-  } : {}
+  }
 }
 
 ############################################
 # Internet Gateway
 ############################################
 resource "aws_internet_gateway" "igw" {
-  count  = var.enabled ? 1 : 0
-  vpc_id = local.vpc_id
-  tags   = merge(local.common_tags, { Name = "${local.name_prefix}-igw", Service = "InternetGateway" })
+  vpc_id = aws_vpc.this.id
+  tags = merge(local.common_tags, {
+    Name    = "${local.name_prefix}-igw"
+    Service = "InternetGateway"
+  })
 }
 
 ############################################
 # Public subnets (2) — /28
 ############################################
 resource "aws_subnet" "public" {
-  for_each = var.enabled ? {
+  for_each = {
     "a" = { cidr = local.public_cidrs[0], az = local.az0 }
     "b" = { cidr = local.public_cidrs[1], az = local.az1 }
-  } : {}
+  }
 
-  vpc_id                  = local.vpc_id
+  vpc_id                  = aws_vpc.this.id
   cidr_block              = each.value.cidr
   availability_zone       = each.value.az
   map_public_ip_on_launch = true
@@ -128,80 +103,78 @@ resource "aws_subnet" "public" {
 # EIP + NAT (1 NAT in public-a)
 ############################################
 resource "aws_eip" "nat" {
-  count  = var.enabled ? 1 : 0
   domain = "vpc"
-  tags   = merge(local.common_tags, { Name = "${local.name_prefix}-nat-eip", Service = "NATGateway" })
+  tags = merge(local.common_tags, {
+    Name    = "${local.name_prefix}-nat-eip"
+    Service = "NATGateway"
+  })
 }
 
 resource "aws_nat_gateway" "nat" {
-  count         = var.enabled ? 1 : 0
-  allocation_id = aws_eip.nat[0].id
+  allocation_id = aws_eip.nat.id
   subnet_id     = aws_subnet.public["a"].id
-  tags          = merge(local.common_tags, { Name = "${local.name_prefix}-nat", Service = "NATGateway" })
+  tags = merge(local.common_tags, {
+    Name    = "${local.name_prefix}-nat"
+    Service = "NATGateway"
+  })
 }
 
 ############################################
 # Route tables
 ############################################
 resource "aws_route_table" "public" {
-  count = var.enabled ? 1 : 0
-  vpc_id = local.vpc_id
+  vpc_id = aws_vpc.this.id
   tags = merge(local.common_tags, {
     Name    = "${local.name_prefix}-rtb-public"
     Service = "RouteTablePublic"
   })
-}
 
-resource "aws_route" "public_default" {
-  count                  = var.enabled ? 1 : 0
-  route_table_id         = aws_route_table.public[0].id
-  destination_cidr_block = "0.0.0.0/0"
-  gateway_id             = aws_internet_gateway.igw[0].id
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.igw.id
+  }
 }
 
 resource "aws_route_table_association" "public_assoc" {
   for_each      = aws_subnet.public
   subnet_id      = each.value.id
-  route_table_id = aws_route_table.public[0].id
+  route_table_id = aws_route_table.public.id
 }
 
 resource "aws_route_table" "private_app" {
-  count = var.enabled ? 1 : 0
-  vpc_id = local.vpc_id
-  tags = merge(local.common_tags, { Name = "${local.name_prefix}-rtb-private-app", Service = "RouteTablePrivate" })
+  vpc_id = aws_vpc.this.id
+  tags = merge(local.common_tags, {
+    Name    = "${local.name_prefix}-rtb-private-app"
+    Service = "RouteTablePrivate"
+  })
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.nat.id
+  }
 }
 
 resource "aws_route_table" "private_api" {
-  count = var.enabled ? 1 : 0
-  vpc_id = local.vpc_id
-  tags = merge(local.common_tags, { Name = "${local.name_prefix}-rtb-private-api", Service = "RouteTablePrivate" })
+  vpc_id = aws_vpc.this.id
+  tags = merge(local.common_tags, {
+    Name    = "${local.name_prefix}-rtb-private-api"
+    Service = "RouteTablePrivate"
+  })
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.nat.id
+  }
 }
 
 resource "aws_route_table" "private_db" {
-  count = var.enabled ? 1 : 0
-  vpc_id = local.vpc_id
-  tags = merge(local.common_tags, { Name = "${local.name_prefix}-rtb-private-db", Service = "RouteTablePrivate" })
-}
-
-resource "aws_route" "private_app_default" {
-  count                  = var.enabled ? 1 : 0
-  route_table_id         = aws_route_table.private_app[0].id
-  destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.nat[0].id
-}
-
-resource "aws_route" "private_api_default" {
-  count                  = var.enabled ? 1 : 0
-  route_table_id         = aws_route_table.private_api[0].id
-  destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.nat[0].id
-}
-
-resource "aws_route" "private_db_default" {
-  count                  = var.enabled ? 1 : 0
-  route_table_id         = aws_route_table.private_db[0].id
-  destination_cidr_block = "0.0.0.0/0"
-  nat_gateway_id         = aws_nat_gateway.nat[0].id
+  vpc_id = aws_vpc.this.id
+  tags = merge(local.common_tags, {
+    Name    = "${local.name_prefix}-rtb-private-db"
+    Service = "RouteTablePrivate"
+  })
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.nat.id
+  }
 }
 
 ############################################
@@ -210,7 +183,7 @@ resource "aws_route" "private_db_default" {
 resource "aws_subnet" "private" {
   for_each = local.private_def
 
-  vpc_id            = local.vpc_id
+  vpc_id            = aws_vpc.this.id
   cidr_block        = each.value.cidr
   availability_zone = each.value.az
 
@@ -223,9 +196,9 @@ resource "aws_subnet" "private" {
 
 locals {
   rtb_by_role = {
-    app = aws_route_table.private_app[0].id
-    api = aws_route_table.private_api[0].id
-    db  = aws_route_table.private_db[0].id
+    app = aws_route_table.private_app.id
+    api = aws_route_table.private_api.id
+    db  = aws_route_table.private_db.id
   }
 }
 
@@ -239,14 +212,15 @@ resource "aws_route_table_association" "private_assoc" {
 # NACL: inbound 443 only, outbound all
 ############################################
 resource "aws_network_acl" "vpc_acl" {
-  count  = var.enabled ? 1 : 0
-  vpc_id = local.vpc_id
-  tags   = merge(local.common_tags, { Name = "${local.name_prefix}-nacl", Service = "NACL" })
+  vpc_id = aws_vpc.this.id
+  tags = merge(local.common_tags, {
+    Name    = "${local.name_prefix}-nacl"
+    Service = "NACL"
+  })
 }
 
 resource "aws_network_acl_rule" "ingress_https" {
-  count          = var.enabled ? 1 : 0
-  network_acl_id = aws_network_acl.vpc_acl[0].id
+  network_acl_id = aws_network_acl.vpc_acl.id
   rule_number    = 100
   egress         = false
   protocol       = "tcp"
@@ -257,8 +231,7 @@ resource "aws_network_acl_rule" "ingress_https" {
 }
 
 resource "aws_network_acl_rule" "egress_all" {
-  count          = var.enabled ? 1 : 0
-  network_acl_id = aws_network_acl.vpc_acl[0].id
+  network_acl_id = aws_network_acl.vpc_acl.id
   rule_number    = 100
   egress         = true
   protocol       = "-1"
@@ -270,13 +243,13 @@ resource "aws_network_acl_rule" "egress_all" {
 
 resource "aws_network_acl_association" "assoc_public" {
   for_each       = aws_subnet.public
-  network_acl_id = aws_network_acl.vpc_acl[0].id
+  network_acl_id = aws_network_acl.vpc_acl.id
   subnet_id      = each.value.id
 }
 
 resource "aws_network_acl_association" "assoc_private" {
   for_each       = aws_subnet.private
-  network_acl_id = aws_network_acl.vpc_acl[0].id
+  network_acl_id = aws_network_acl.vpc_acl.id
   subnet_id      = each.value.id
 }
 
@@ -295,7 +268,6 @@ data "aws_iam_policy_document" "flowlogs_trust" {
 }
 
 resource "aws_iam_role" "flowlogs_role" {
-  count              = var.enabled ? 1 : 0
   name               = "${local.name_prefix}-vpc-flowlogs-role"
   assume_role_policy = data.aws_iam_policy_document.flowlogs_trust.json
   tags               = merge(local.common_tags, { Service = "FlowLogs" })
@@ -309,32 +281,29 @@ data "aws_iam_policy_document" "flowlogs_policy" {
       "logs:CreateLogStream",
       "logs:PutLogEvents",
       "logs:DescribeLogGroups",
-      "logs:DescribeLogStreams",
+      "logs:DescribeLogStreams"
     ]
     resources = ["*"]
   }
 }
 
 resource "aws_iam_role_policy" "flowlogs_role_policy" {
-  count  = var.enabled ? 1 : 0
   name   = "${local.name_prefix}-vpc-flowlogs-policy"
-  role   = aws_iam_role.flowlogs_role[0].id
+  role   = aws_iam_role.flowlogs_role.id
   policy = data.aws_iam_policy_document.flowlogs_policy.json
 }
 
 resource "aws_cloudwatch_log_group" "flowlogs" {
-  count             = var.enabled ? 1 : 0
   name              = "/vpc/flowlogs/${local.name_prefix}"
   retention_in_days = var.flow_logs_retention_days
   tags              = merge(local.common_tags, { Service = "FlowLogs" })
 }
 
 resource "aws_flow_log" "vpc" {
-  count                 = var.enabled ? 1 : 0
-  vpc_id                = local.vpc_id
-  log_destination_type  = "cloud-watch-logs"
-  log_group_name        = aws_cloudwatch_log_group.flowlogs[0].name
-  iam_role_arn          = aws_iam_role.flowlogs_role[0].arn
-  traffic_type          = "ALL"
-  tags                  = merge(local.common_tags, { Service = "FlowLogs" })
+  vpc_id               = aws_vpc.this.id
+  log_destination_type = "cloud-watch-logs"
+  log_group_name       = aws_cloudwatch_log_group.flowlogs.name
+  iam_role_arn         = aws_iam_role.flowlogs_role.arn
+  traffic_type         = "ALL"
+  tags                 = merge(local.common_tags, { Service = "FlowLogs" })
 }
