@@ -1,58 +1,63 @@
-variable "enabled" {
-  type    = bool
-  default = true
-}
-
 variable "region" {
   type        = string
-  description = "AWS region for this module's provider"
-  default     = "us-east-1"
+  default     = null
+  description = "AWS region; defaults to us-east-1 if not provided."
 }
 
-# Used for naming, e.g. SBX_INTAKE_ID_001
 variable "sandbox_name" {
-  type = string
-}
-
-# Optional override for Name prefix; if null we use sandbox_name
-variable "name_prefix_override" {
-  type    = string
-  default = null
-}
-
-# Default to CIDR mode; IPAM only if ipam_pool_id is set to non-empty
-variable "cidr_block" {
   type        = string
-  description = "VPC CIDR (used unless ipam_pool_id is provided)"
-  default     = "10.0.0.0/16"
+  description = "Base name, e.g. sbx_intake_id_001"
+}
+
+variable "name_prefix_override" {
+  type        = string
+  default     = null
+  description = "Optional override for name prefix. If null, sandbox_name is used."
 }
 
 variable "ipam_pool_id" {
   type        = string
-  description = "IPAM pool id (if non-empty, module uses IPAM)"
-  default     = ""
+  default     = null
+  description = "If set, VPC will be allocated from this IPAM pool."
 }
 
 variable "vpc_netmask_length" {
   type        = number
-  description = "VPC netmask length for IPAM mode"
   default     = 16
+  description = "Netmask length when allocating from IPAM (only used if ipam_pool_id is set)."
 }
 
-# Availability Zones (e.g. ["us-east-1a","us-east-1b"]); if null, module auto-picks 2
+variable "cidr_block" {
+  type        = string
+  default     = null
+  description = "If set (and ipam_pool_id not set), VPC will use this CIDR."
+}
+
 variable "azs" {
-  type    = list(string)
-  default = null
+  type        = list(string)
+  default     = null
+  description = "Optional AZs (need at least 2 if provided). If null, first two AZs in region are used."
 }
 
-# CloudWatch log retention (days) for VPC Flow Logs
 variable "flow_logs_retention_days" {
-  type    = number
-  default = 30
+  type        = number
+  default     = 30
+  description = "CloudWatch retention for VPC flow logs."
 }
 
-# Extra tags merged into all resources
 variable "tags_extra" {
-  type    = map(string)
-  default = {}
+  type        = map(string)
+  default     = {}
+  description = "Extra tags merged into all resources."
+}
+
+locals {
+  name_prefix = var.name_prefix_override != null ? var.name_prefix_override : var.sandbox_name
+
+  common_tags = merge(
+    {
+      Name = local.name_prefix
+    },
+    var.tags_extra
+  )
 }
