@@ -1,48 +1,59 @@
-# align with provider.tf: declare region
 variable "region" {
   type        = string
-  description = "AWS region for this module's provider"
+  description = "AWS region"
 }
 
 variable "enabled" {
   type    = bool
-  default = true
+  default = false
 }
 
+# Display base name (e.g., sbx_intake_id_001-ec2)
 variable "name" {
   type    = string
   default = "ec2"
 }
 
-# If provided via inputs.json, we'll try to use it; else we fall back to AL2 via SSM in main.tf
-variable "ami_id" {
-  type    = string
-  default = null
-}
-
-variable "instance_type" {
-  type    = string
-  default = "t3.micro"
-}
-
-# From VPC stack (private subnet)
-variable "subnet_id" {
+# VPC + subnets (IDs)
+variable "vpc_id" {
   type = string
 }
 
-# From IAM stack (instance profile name)
+variable "subnets" {
+  type    = list(string)
+  default = []
+  # Expect at least one subnet when enabled; Terragrunt passes them in.
+}
+
+# IAM instance profile name (from IAM module output)
 variable "iam_instance_profile" {
   type    = string
   default = null
 }
 
-# From KeyPair stack (key name to attach)
+# EC2 KeyPair name (from KeyPair module output)
 variable "key_name" {
   type    = string
   default = null
 }
 
-# Optional extra tags
+# EC2 sizing / image
+variable "instance_count" {
+  type    = number
+  default = 1
+}
+
+variable "instance_type" {
+  type    = string
+  default = "t2.micro"
+}
+
+variable "ami_id" {
+  type    = string
+  default = null   # If null/empty → fallback to AL2 latest
+}
+
+# Extra tags merged into all resources
 variable "tags_extra" {
   type    = map(string)
   default = {}
@@ -50,9 +61,7 @@ variable "tags_extra" {
 
 locals {
   common_tags = merge(
-    {
-      Name = var.name
-    },
+    { Name = var.name },
     var.tags_extra
   )
 }
