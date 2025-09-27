@@ -8,6 +8,7 @@ terraform {
     }
   }
 
+  # Keep state per-stack
   backend "s3" {
     bucket  = "wbd-tf-state-sandbox"
     key     = "wbd/sandbox/ec2/terraform.tfstate"
@@ -16,7 +17,7 @@ terraform {
   }
 }
 
+# Region comes from the module input
 provider "aws" {
-  # align with IAM/S3: take region from module input
   region = var.region
 }
