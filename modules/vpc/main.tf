@@ -1,70 +1,73 @@
 ############################################
-# Availability Zones (safe & simple)
+# Availability Zones (safe defaults)
 ############################################
 data "aws_availability_zones" "available" {
   state = "available"
 }
 
+############################################
+# Locals: simple, defensive logic
+############################################
 locals {
-  # Use provided AZs if ≥ 2; else take first two from provider's region
-  azs_len       = length(var.azs != null ? var.azs : [])
-  azs_effective = (local.azs_len >= 2) ? var.azs : slice(data.aws_availability_zones.available.names, 0, 2)
+  # ----- AZ selection: use provided azs if at least 2, else first two in region
+  azs_input     = var.azs != null ? var.azs : []
+  azs_effective = length(local.azs_input) >= 2 ? local.azs_input : slice(data.aws_availability_zones.available.names, 0, 2)
   az0           = local.azs_effective[0]
   az1           = local.azs_effective[1]
 
-  ############################################
-  # Addressing choice (CIDR by default; IPAM only when pool id is set)
-  ############################################
-  cidr_trim   = trimspace(coalesce(var.cidr_block, ""))
-  cidr_is_set = (local.cidr_trim != "")
+  # ----- Addressing preference: IPAM > explicit CIDR > default CIDR
+  ipam_pool_id_trim = var.ipam_pool_id != null ? trimspace(var.ipam_pool_id) : ""
+  ipam_pool_id_set  = local.ipam_pool_id_trim != ""
 
-  # IPAM is enabled only if pool id is non-empty and netmask is provided
-  ipam_pool_id_trim = trimspace(coalesce(var.ipam_pool_id, ""))
-  use_ipam          = (local.ipam_pool_id_trim != "") && (var.vpc_netmask_length != null)
+  cidr_trim = var.cidr_block != null ? trimspace(var.cidr_block) : ""
+  cidr_set  = local.cidr_trim != ""
 
-  # Naming / tags
-  name_prefix = coalesce(var.name_prefix_override, trimspace(var.sandbox_name))
+  # If IPAM pool id is present, use IPAM; otherwise pick CIDR (explicit or default)
+  chosen_use_ipam    = local.ipam_pool_id_set
+  chosen_cidr        = local.chosen_use_ipam ? null : (local.cidr_set ? local.cidr_trim : "10.0.0.0/16")
+  chosen_ipam_pool   = local.chosen_use_ipam ? var.ipam_pool_id : null
+  chosen_netmask_len = local.chosen_use_ipam ? (var.vpc_netmask_length != null ? var.vpc_netmask_length : 16) : null
+
+  # Naming and tags
+  name_prefix = (var.name_prefix_override != null && trimspace(var.name_prefix_override) != "")
+    ? trimspace(var.name_prefix_override)
+    : trimspace(var.sandbox_name)
+
   common_tags = merge(
-    { Name = "${local.name_prefix}-vpc", Service = "VPC" },
+    {
+      Name    = "${local.name_prefix}-vpc"
+      Service = "VPC"
+    },
     var.tags_extra
   )
 }
 
 ############################################
-# VPC
+# VPC (chooses IPAM or CIDR automatically)
 ############################################
 resource "aws_vpc" "this" {
   count = var.enabled ? 1 : 0
 
-  # Mutually exclusive based on locals above
-  ipv4_ipam_pool_id   = local.use_ipam ? var.ipam_pool_id       : null
-  ipv4_netmask_length = local.use_ipam ? var.vpc_netmask_length : null
-  cidr_block          = local.use_ipam ? null                    : local.cidr_trim
+  ipv4_ipam_pool_id   = local.chosen_use_ipam ? local.chosen_ipam_pool   : null
+  ipv4_netmask_length = local.chosen_use_ipam ? local.chosen_netmask_len : null
+  cidr_block          = local.chosen_use_ipam ? null : local.chosen_cidr
 
   enable_dns_support   = true
   enable_dns_hostnames = true
 
   tags = local.common_tags
-
-  lifecycle {
-    precondition {
-      # Valid if either: (a) IPAM truly configured OR (b) a non-empty CIDR is present
-      condition     = local.use_ipam || local.cidr_is_set
-      error_message = "Provide non-empty cidr_block OR specify ipam_pool_id and vpc_netmask_length."
-    }
-  }
 }
 
-# Convenience locals after VPC exists
+# Convenience locals that depend on the VPC
 locals {
-  vpc_id   = var.enabled ? aws_vpc.this[0].id         : null
-  vpc_cidr = var.enabled ? aws_vpc.this[0].cidr_block : null
+  vpc_id   = var.enabled ? aws_vpc.this[0].id : null
+  vpc_cidr = var.enabled ? (local.chosen_use_ipam ? aws_vpc.this[0].cidr_block : local.chosen_cidr) : null
 }
 
 ############################################
 # CIDR planning
-# - 6 private /23 subnets (≈512 IPs each)
-# - 2 public /28 subnets (≈16 IPs each)
+# - 6 private /23 subnets (≈512 IPs)
+# - 2 public /28 subnets (≈16 IPs)
 ############################################
 locals {
   private_cidrs = var.enabled ? [
@@ -165,28 +168,19 @@ resource "aws_route_table_association" "public_assoc" {
 resource "aws_route_table" "private_app" {
   count = var.enabled ? 1 : 0
   vpc_id = local.vpc_id
-  tags = merge(local.common_tags, {
-    Name    = "${local.name_prefix}-rtb-private-app"
-    Service = "RouteTablePrivate"
-  })
+  tags = merge(local.common_tags, { Name = "${local.name_prefix}-rtb-private-app", Service = "RouteTablePrivate" })
 }
 
 resource "aws_route_table" "private_api" {
   count = var.enabled ? 1 : 0
   vpc_id = local.vpc_id
-  tags = merge(local.common_tags, {
-    Name    = "${local.name_prefix}-rtb-private-api"
-    Service = "RouteTablePrivate"
-  })
+  tags = merge(local.common_tags, { Name = "${local.name_prefix}-rtb-private-api", Service = "RouteTablePrivate" })
 }
 
 resource "aws_route_table" "private_db" {
   count = var.enabled ? 1 : 0
   vpc_id = local.vpc_id
-  tags = merge(local.common_tags, {
-    Name    = "${local.name_prefix}-rtb-private-db"
-    Service = "RouteTablePrivate"
-  })
+  tags = merge(local.common_tags, { Name = "${local.name_prefix}-rtb-private-db", Service = "RouteTablePrivate" })
 }
 
 resource "aws_route" "private_app_default" {
@@ -228,11 +222,11 @@ resource "aws_subnet" "private" {
 }
 
 locals {
-  rtb_by_role = var.enabled ? {
+  rtb_by_role = {
     app = aws_route_table.private_app[0].id
     api = aws_route_table.private_api[0].id
     db  = aws_route_table.private_db[0].id
-  } : {}
+  }
 }
 
 resource "aws_route_table_association" "private_assoc" {
@@ -315,7 +309,7 @@ data "aws_iam_policy_document" "flowlogs_policy" {
       "logs:CreateLogStream",
       "logs:PutLogEvents",
       "logs:DescribeLogGroups",
-      "logs:DescribeLogStreams"
+      "logs:DescribeLogStreams",
     ]
     resources = ["*"]
   }
