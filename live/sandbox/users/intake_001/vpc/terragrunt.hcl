@@ -8,25 +8,29 @@ locals {
 }
 
 inputs = {
-  region       = "us-east-1"
-  enabled      = try(local.cfg.modules.vpc.enabled, true)
-  sandbox_name = local.cfg.sandbox_name
+  region                 = "us-east-1"
 
-  # Use JSON cidr_block if present; else safe default.
-  cidr_block   = try(local.cfg.modules.vpc.cidr_block, "10.0.0.0/16")
+  # naming
+  sandbox_name           = local.cfg.sandbox_name
+  name_prefix_override   = try(local.cfg.modules.vpc.name, null)
 
-  # IPAM optional: if you populate these, module switches to IPAM.
-  ipam_pool_id       = try(local.cfg.modules.vpc.ipam_pool_id, "")
-  vpc_netmask_length = try(local.cfg.modules.vpc.vpc_netmask_length, 16)
+  # addressing (pick one or none)
+  ipam_pool_id           = try(local.cfg.modules.vpc.ipam_pool_id, null)
+  vpc_netmask_length     = try(local.cfg.modules.vpc.vpc_netmask_length, 16)
+  cidr_block             = try(local.cfg.modules.vpc.cidr_block, null)
 
-  azs = try(local.cfg.modules.vpc.azs, null)
+  # optional azs override (else module picks first two in region)
+  azs                    = try(local.cfg.modules.vpc.azs, null)
 
   flow_logs_retention_days = try(local.cfg.modules.vpc.flow_logs_retention_days, 30)
 
-  tags_extra = {
-    RequestID   = local.cfg.request_id
-    Requester   = local.cfg.requester
-    Environment = local.cfg.environment
-    Service     = "VPC"
-  }
+  tags_extra = merge(
+    try(local.cfg.common_tags, {}),
+    {
+      RequestID   = local.cfg.request_id
+      Requester   = local.cfg.requester
+      Environment = local.cfg.environment
+      Service     = "VPC"
+    }
+  )
 }
