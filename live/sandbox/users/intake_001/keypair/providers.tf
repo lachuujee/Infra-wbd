@@ -12,6 +12,7 @@ terraform {
     }
   }
 
+  # Remote state for the KeyPair stack
   backend "s3" {
     bucket  = "wbd-tf-state-sandbox"
     key     = "wbd/sandbox/keypair/terraform.tfstate"
@@ -20,7 +21,7 @@ terraform {
   }
 }
 
+# Region taken from module variable `var.region`
 provider "aws" {
-  # Align with other modules: take region from module input
   region = var.region
 }
