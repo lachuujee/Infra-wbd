@@ -8,11 +8,8 @@ locals {
 }
 
 inputs = {
-  region                 = "us-east-1"
-
   # naming
-  sandbox_name           = local.cfg.sandbox_name
-  name_prefix_override   = try(local.cfg.modules.vpc.name, null)
+  sandbox_name = local.cfg.sandbox_name
 
   # addressing (pick one or none)
   ipam_pool_id           = try(local.cfg.modules.vpc.ipam_pool_id, null)
@@ -34,3 +31,4 @@ inputs = {
     }
   )
 }
+
