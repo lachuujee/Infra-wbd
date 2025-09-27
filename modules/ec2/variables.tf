@@ -1,67 +1,86 @@
+# Basic controls
 variable "region" {
   type        = string
   description = "AWS region"
+  default     = "us-east-1"
 }
 
 variable "enabled" {
-  type    = bool
-  default = false
+  type        = bool
+  description = "Whether to create EC2 resources"
+  default     = false
 }
 
-# Display base name (e.g., sbx_intake_id_001-ec2)
 variable "name" {
-  type    = string
-  default = "ec2"
+  type        = string
+  description = "Base name for the EC2 instance(s) and SG"
+  default     = "ec2"
 }
 
-# VPC + subnets (IDs)
-variable "vpc_id" {
-  type = string
-}
-
-variable "subnets" {
-  type    = list(string)
-  default = []
-  # Expect at least one subnet when enabled; Terragrunt passes them in.
-}
-
-# IAM instance profile name (from IAM module output)
-variable "iam_instance_profile" {
-  type    = string
-  default = null
-}
-
-# EC2 KeyPair name (from KeyPair module output)
-variable "key_name" {
-  type    = string
-  default = null
-}
-
-# EC2 sizing / image
 variable "instance_count" {
-  type    = number
-  default = 1
+  type        = number
+  description = "How many EC2 instances to create"
+  default     = 1
 }
 
 variable "instance_type" {
-  type    = string
-  default = "t2.micro"
+  type        = string
+  description = "EC2 instance type"
+  default     = "t2.micro"
 }
 
 variable "ami_id" {
-  type    = string
-  default = null   # If null/empty → fallback to AL2 latest
+  type        = string
+  description = "Optional explicit AMI ID. If empty, use latest Amazon Linux 2 via SSM"
+  default     = null
 }
 
-# Extra tags merged into all resources
+variable "ami_ssm_parameter" {
+  type        = string
+  description = "SSM parameter path for latest AL2 AMI"
+  default     = "/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2"
+}
+
 variable "tags_extra" {
-  type    = map(string)
-  default = {}
+  type        = map(string)
+  description = "Extra tags merged into all resources"
+  default     = {}
 }
 
-locals {
-  common_tags = merge(
-    { Name = var.name },
-    var.tags_extra
-  )
+# Remote state wiring (defaults match your current backends)
+variable "remote_state_bucket" {
+  type        = string
+  description = "S3 bucket holding Terraform states of sibling stacks"
+  default     = "wbd-tf-state-sandbox"
+}
+
+variable "remote_state_region" {
+  type        = string
+  description = "Region of the remote state bucket"
+  default     = "us-east-1"
+}
+
+variable "vpc_state_key" {
+  type        = string
+  description = "S3 key for the VPC stack state"
+  default     = "wbd/sandbox/vpc/terraform.tfstate"
+}
+
+variable "iam_state_key" {
+  type        = string
+  description = "S3 key for the IAM stack state"
+  default     = "wbd/sandbox/iam/terraform.tfstate"
+}
+
+variable "keypair_state_key" {
+  type        = string
+  description = "S3 key for the KeyPair stack state"
+  default     = "wbd/sandbox/keypair/terraform.tfstate"
+}
+
+# Which role-labelled private subnets to prefer when present
+variable "subnet_role_keys" {
+  type        = list(string)
+  description = "Preferred role keys from private_subnet_ids_by_role"
+  default     = ["app-a", "app-b"]
 }
